@@ -76,7 +76,7 @@ export function parseVerif(buffer: ArrayBuffer): VerifEntity[] {
 /** Reads the "Brouillard" workbook into normalized entry lines. */
 export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const sheet = wb.Sheets[wb.SheetNames[0] ?? ""]!;
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { raw: true, defval: "" });
 
   const pick = (r: Record<string, unknown>, ...keys: string[]) => {
@@ -176,7 +176,7 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
           journal,
           piece,
           date,
-          libelle: trLines[0]?.libelle ?? group[0].libelle,
+          libelle: trLines[0]?.libelle ?? first.libelle,
           comptes: [...new Set(group.map((l) => l.compte))].join(", "),
           montant: montantTr,
           detail: `Mouvement de trésorerie ${ent.nom} soldé sur les comptes de : ${autresNoms.join(", ")}`,
@@ -197,7 +197,7 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
           journal,
           piece,
           date,
-          libelle: trLines[0]?.libelle ?? group[0].libelle,
+          libelle: trLines[0]?.libelle ?? first.libelle,
           comptes: [...new Set(group.map((l) => l.compte))].join(", "),
           montant: montantTr,
           detail: contreparties.length
@@ -219,7 +219,7 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
           journal,
           piece,
           date,
-          libelle: trLines[0]?.libelle ?? group[0].libelle,
+          libelle: trLines[0]?.libelle ?? first.libelle,
           comptes: [...new Set(group.map((l) => l.compte))].join(", "),
           montant: net,
           detail: `Écart de ${net.toLocaleString("fr-FR")} entre la trésorerie et l'appel de fonds sur la pièce`,
