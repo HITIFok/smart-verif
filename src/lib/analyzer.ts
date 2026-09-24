@@ -1,8 +1,10 @@
 import * as XLSX from "xlsx";
-import type { AnalysisResult, Anomaly, EntitySummaryHelper, EntryLine } from "./analysis-helpers";
-import type { EntitySummary } from "./analysis-types";
-
-export type { EntitySummaryHelper };
+import type {
+  AnalysisResult,
+  Anomaly,
+  EntitySummary,
+  EntryLine,
+} from "./analysis-types";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
