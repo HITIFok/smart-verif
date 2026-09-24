@@ -139,7 +139,12 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
   };
 
   for (const [key, group] of pieces) {
-    const [journal, piece, date] = key.split("|");
+    const parts = key.split("|");
+    const journal = parts[0] ?? "";
+    const piece = parts[1] ?? "";
+    const date = parts[2] ?? "";
+    const first = group[0];
+    if (!first) continue;
     const tr = group.filter((l) => family(l.compte) === "TR");
     if (tr.length === 0) continue;
 
