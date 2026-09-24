@@ -38,8 +38,8 @@ const family = (compte: string): "AF" | "TR" | null => {
 /** Reads the "Vérification" workbook and extracts the entity -> accounts mapping. */
 export function parseVerif(buffer: ArrayBuffer): VerifEntity[] {
   const wb = XLSX.read(buffer, { type: "array" });
-  const sheetName = wb.SheetNames.find((n) => /^\d{4}$/.test(n.trim())) ?? wb.SheetNames[0];
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetName], {
+  const sheetName = wb.SheetNames.find((n) => /^\d{4}$/.test(n.trim())) ?? wb.SheetNames[0] ?? "";
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetName]!, {
     header: 1,
     raw: true,
     blankrows: true,
