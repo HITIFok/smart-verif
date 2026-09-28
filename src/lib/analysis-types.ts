@@ -1,3 +1,5 @@
+import type { TransferProposal } from "./transfers";
+
 export type AnomalyType = "mauvais_client" | "hors_perimetre" | "compte_oublie";
 
 export interface EntryLine {
@@ -40,6 +42,7 @@ export interface EntitySummary {
 export interface AnalysisResult {
   entites: EntitySummary[];
   anomalies: Anomaly[];
+  transferts: TransferProposal[];
   stats: {
     lignes: number;
     pieces: number;
