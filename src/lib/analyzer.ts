@@ -5,6 +5,7 @@ import type {
   EntitySummary,
   EntryLine,
 } from "./analysis-types";
+import { detectTransfers } from "./transfers";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
@@ -283,9 +284,15 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
   entites.sort((a, b) => Math.abs(b.ecart) - Math.abs(a.ecart));
   anomalies.sort((a, b) => Math.abs(b.montant) - Math.abs(a.montant));
 
+  const transferts = detectTransfers(
+    lignes,
+    new Map(verif.map((e) => [e.suffixe, e.nom])),
+  );
+
   return {
     entites,
     anomalies,
+    transferts,
     stats: {
       lignes: lignes.length,
       pieces: pieces.size,
