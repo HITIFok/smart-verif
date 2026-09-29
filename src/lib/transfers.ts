@@ -178,7 +178,11 @@ export function detectTransfers(
       // 2. Paiement prestataire : 401 D / 512-513 C
       if (p3 === "401" && l.debit) {
         const m = r2(l.debit);
-        const cands = [...new Set(paiementClient.get(`${l.tiers || l.compte}|${m}`) ?? [])];
+        const baseKey = `${l.tiers || l.compte}|${m}`;
+        // Départage par numéro de pièce d'abord, repli sur tiers+montant
+        const cands = [...new Set(
+          paiementClientPiece.get(`${baseKey}|${first.piece}`) ?? paiementClient.get(baseKey) ?? [],
+        )];
         const s = cands.length === 1 ? cands[0]! : null;
         const src = s ? ownBank(s) : null;
         const common = {
