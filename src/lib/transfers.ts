@@ -85,18 +85,24 @@ export function detectTransfers(
     return false;
   };
 
-  // TIERS payments: 401 credit (tiers + amount) -> client suffix of the 467 debit
+  // TIERS payments: 401 credit (tiers + amount) -> client suffix of the 467 debit.
+  // Two keys: precise (tiers|amount|piece) and loose (tiers|amount) as fallback.
   const paiementClient = new Map<string, string[]>();
+  const paiementClientPiece = new Map<string, string[]>();
   for (const g of pieces.values()) {
     if (g[0]?.journal !== "TIERS") continue;
     const s467 = [...new Set(g.filter((l) => l.compte.startsWith("467") && l.debit).map((l) => l.compte.slice(3)))];
     if (s467.length === 0) continue;
     for (const l of g) {
       if (!l.compte.startsWith("401") || !l.credit) continue;
-      const k = `${l.tiers || l.compte}|${r2(l.credit)}`;
-      const arr = paiementClient.get(k) ?? [];
+      const base = `${l.tiers || l.compte}|${r2(l.credit)}`;
+      const arr = paiementClient.get(base) ?? [];
       arr.push(...s467);
-      paiementClient.set(k, arr);
+      paiementClient.set(base, arr);
+      const kp = `${base}|${g[0]!.piece}`;
+      const arrP = paiementClientPiece.get(kp) ?? [];
+      arrP.push(...s467);
+      paiementClientPiece.set(kp, arrP);
     }
   }
 
