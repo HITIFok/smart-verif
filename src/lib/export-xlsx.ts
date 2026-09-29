@@ -34,5 +34,16 @@ export function exportAnomalies(result: AnalysisResult) {
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(anomalies), "Écritures à corriger");
 
+  const tr = result.transferts.flatMap((t) => {
+    const statut = t.statut === "a_creer" ? "À créer" : t.statut === "existe_deja" ? "Déjà passée" : "Manuel";
+    const base = { Opération: t.type, Client: t.entite, "Pièce source": t.piece, Date: t.date, Libellé: t.libelle, Statut: statut, Motif: t.motif };
+    if (!t.envoyeur.length) return [{ ...base, Côté: "", Journal: "", Compte: "", Débit: "", Crédit: "" }];
+    return [
+      ...t.envoyeur.map((l) => ({ ...base, Côté: "Envoyeur", Journal: t.journalSource, Compte: l.compte, Débit: l.sens === "D" ? l.montant : "", Crédit: l.sens === "C" ? l.montant : "" })),
+      ...t.receptionnaire.map((l) => ({ ...base, Côté: "Réceptionnaire", Journal: t.journalDestination, Compte: l.compte, Débit: l.sens === "D" ? l.montant : "", Crédit: l.sens === "C" ? l.montant : "" })),
+    ];
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr), "Comptes à comptes 580001");
+
   XLSX.writeFile(wb, `Anomalies_BG_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }

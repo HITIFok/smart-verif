@@ -51,7 +51,7 @@ function Index() {
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [tab, setTab] = useState<"clients" | "ecritures">("clients");
+  const [tab, setTab] = useState<"clients" | "ecritures" | "transferts">("clients");
   const [open, setOpen] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<AnomalyType | "tous">("tous");
   const [filterClient, setFilterClient] = useState<string>("tous");
@@ -193,7 +193,7 @@ function Index() {
           </section>
 
           <div className="mt-8 flex gap-1 border-b border-border">
-            {(["clients", "ecritures"] as const).map((t) => (
+            {(["clients", "ecritures", "transferts"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -203,7 +203,11 @@ function Index() {
                     : "border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {t === "clients" ? "Tableau de bord par client" : "Écritures à corriger"}
+                {t === "clients"
+                  ? "Tableau de bord par client"
+                  : t === "ecritures"
+                    ? "Écritures à corriger"
+                    : `Comptes à comptes (${result.transferts.filter((x) => x.statut === "a_creer").length})`}
               </button>
             ))}
           </div>
@@ -277,6 +281,8 @@ function Index() {
                 );
               })}
             </section>
+          ) : tab === "transferts" ? (
+            <Transferts result={result} />
           ) : (
             <section className="mt-6">
               <div className="mb-4 flex flex-wrap gap-3">
