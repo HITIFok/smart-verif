@@ -13,6 +13,7 @@ import {
 import { FileDrop } from "@/components/FileDrop";
 import { exportAnomalies } from "@/lib/export-xlsx";
 import type { AnalysisResult, AnomalyType } from "@/lib/analysis-types";
+import type { TransferProposal } from "@/lib/transfers";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -424,5 +425,83 @@ function Cell({ label, value, strong }: { label: string; value: number; strong?:
         {fmt(value)}
       </p>
     </div>
+  );
+}
+
+const OP_LABEL: Record<TransferProposal["type"], string> = {
+  appel_de_fonds: "Appel de fonds",
+  paiement: "Paiement",
+  honoraires: "Honoraires",
+};
+const ST_LABEL: Record<TransferProposal["statut"], string> = {
+  a_creer: "À créer",
+  existe_deja: "Déjà passée",
+  manuel: "À traiter manuellement",
+};
+
+function Transferts({ result }: { result: AnalysisResult }) {
+  const [statut, setStatut] = useState<TransferProposal["statut"] | "tous">("a_creer");
+  const [type, setType] = useState<TransferProposal["type"] | "tous">("tous");
+  const [limit, setLimit] = useState(100);
+  const list = result.transferts.filter(
+    (t) => (statut === "tous" || t.statut === statut) && (type === "tous" || t.type === type),
+  );
+  const sel = "rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent";
+  return (
+    <section className="mt-6">
+      <div className="mb-4 flex flex-wrap gap-3">
+        <select value={statut} onChange={(e) => { setStatut(e.target.value as never); setLimit(100); }} className={sel}>
+          <option value="tous">Tous les statuts</option>
+          {Object.entries(ST_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select value={type} onChange={(e) => { setType(e.target.value as never); setLimit(100); }} className={sel}>
+          <option value="tous">Toutes les opérations</option>
+          {Object.entries(OP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
+      <p className="mb-3 text-sm text-muted-foreground">
+        {list.length.toLocaleString("fr-FR")} écriture(s) de compte à compte via 580001
+      </p>
+      <div className="panel divide-y divide-border">
+        {list.slice(0, limit).map((t) => (
+          <div key={t.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto]">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">
+                {OP_LABEL[t.type]} · {t.entite}
+                <span className="num ml-2 font-normal text-muted-foreground">
+                  {t.journalDestination} · pièce {t.piece} · {t.date}
+                </span>
+              </p>
+              <p className="truncate text-sm text-muted-foreground">{t.libelle}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t.motif}</p>
+              {t.envoyeur.length > 0 && (
+                <div className="num mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                  <div className="rounded bg-secondary/60 px-2 py-1">
+                    Envoyeur ({t.journalSource}) : {t.envoyeur.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
+                  </div>
+                  <div className="rounded bg-secondary/60 px-2 py-1">
+                    Réceptionnaire ({t.journalDestination}) : {t.receptionnaire.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="num text-sm font-semibold">{fmt(t.montant)}</p>
+              <p className={`mt-1 text-[11px] font-semibold uppercase ${t.statut === "a_creer" ? "text-destructive" : t.statut === "manuel" ? "text-accent-foreground" : "text-success"}`}>
+                {ST_LABEL[t.statut]}
+              </p>
+            </div>
+          </div>
+        ))}
+        {list.length === 0 && (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">Aucune écriture pour ces filtres.</p>
+        )}
+      </div>
+      {list.length > limit && (
+        <button onClick={() => setLimit((l) => l + 200)} className="mt-4 w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent">
+          Afficher plus ({list.length - limit} restantes)
+        </button>
+      )}
+    </section>
   );
 }
