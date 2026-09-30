@@ -66,9 +66,17 @@ export function detectTransfers(
     ["SANKO", "260"], // FIRST IMMO
     ["FOUNDEVER", "700"], // SMARTONE
     ["KIDS AKADEMY", "800"], // NACRE
+    ["NACRE DIR", "800"],
     ["TANJAKA FOOD", "350"], // OMNIVEST
-    ["SANLAMALLIANZ AUTOFI", "100"], // SANLAM
-    ["SANLAMALLIANZ COMPAGNIE", "100"],
+    ["SANLAMALLIANZ AUTOFI", "501"], // compte propre 512501 (BNIALL) depuis 2026
+    ["SANLAMALLIANZ COMPAGNIE", "100"], // 512100 SANLAM
+    ["JBU", "320"], // compte 512320 de BOOST (BNIJB)
+    ["JBS", "320"],
+    ["BOOST", "320"],
+    ["TAMBOHO", "201"], // compte 512201 de TALYS (BOAGTA)
+    ["STMB", "201"],
+    ["SOCOTA/LECO", "330"], // compte 512330 de LECOFRUIT (BNILEC)
+    ["EVASAN", "140"], // compte 512140 (BOATSA)
   ]);
   const ownBank = (s: string) => {
     const direct = `512${s}`;
