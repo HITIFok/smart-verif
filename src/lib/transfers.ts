@@ -51,29 +51,30 @@ export function detectTransfers(
   }
 
   const bankAccounts = new Set(lignes.filter((l) => isBank(l.compte)).map((l) => l.compte));
-  // Entités qui partagent le compte 512 d'une autre entité
+  // Entités qui partagent le compte 512 d'une autre entité : nom -> suffixe du compte 512 utilisé
   const SHARED_BANK = new Map<string, string>([
-    ["PAMF", "EASY TECH"],
-    ["INGEDATA", "EVIOSYS"],
-    ["CAMUSAT", "EVIOSYS"],
-    ["STELLARIX", "AITS"],
-    ["WELIGHT", "AXIANSS"],
-    ["MADAGASCO", "AXIANSS"],
-    ["ATSS", "AXIANSS"],
-    ["AXIAN UNIVERSITY", "TOM"],
-    ["FONDATION AXIAN", "TOM"],
-    ["SANKO", "FIRST IMMO"],
-    ["FOUNDEVER", "SMARTONE"],
-    ["KIDS AKADEMY", "NACRE"],
-    ["TANJAKA FOOD", "OMNIVEST"],
+    ["PAMF", "190"], // EASY TECH
+    ["EVIOSYS", "600"], // ex-SONOCO, compte 512600
+    ["INGEDATA", "600"],
+    ["CAMUSAT", "600"],
+    ["STELLARIX", "210"], // AITS
+    ["WELIGHT", "220"], // AXIANSS
+    ["MADAGASCO", "220"],
+    ["ATSS", "220"],
+    ["AXIAN UNIVERSITY", "240"], // TOM
+    ["FONDATION AXIAN", "240"],
+    ["SANKO", "260"], // FIRST IMMO
+    ["FOUNDEVER", "700"], // SMARTONE
+    ["KIDS AKADEMY", "800"], // NACRE
+    ["TANJAKA FOOD", "350"], // OMNIVEST
+    ["SANLAMALLIANZ AUTOFI", "100"], // SANLAM
+    ["SANLAMALLIANZ COMPAGNIE", "100"],
   ]);
-  const suffixByName = new Map([...nomParSuffixe.entries()].map(([s, n]) => [n, s]));
   const ownBank = (s: string) => {
     const direct = `512${s}`;
     if (bankAccounts.has(direct)) return direct;
     const nom = nomParSuffixe.get(s);
-    const aliasNom = nom ? SHARED_BANK.get(nom) : undefined;
-    const aliasSuffix = aliasNom ? suffixByName.get(aliasNom) : undefined;
+    const aliasSuffix = nom ? SHARED_BANK.get(nom) : undefined;
     const aliasAcc = aliasSuffix ? `512${aliasSuffix}` : null;
     return aliasAcc && bankAccounts.has(aliasAcc) ? aliasAcc : null;
   };
