@@ -52,7 +52,9 @@ export function parseVerif(buffer: ArrayBuffer): VerifEntity[] {
   for (const row of rows) {
     const c0 = str(row?.[0]);
     const c1 = str(row?.[1]).replace(/\.0$/, "");
-    if (c0 && !isAccount(c0)) {
+    // A row that also carries an account code (e.g. stray "AOUT" on the 467130
+    // line of PAMF) is an account row with a stray label, NOT a new entity.
+    if (c0 && !isAccount(c0) && !(isAccount(c1) && family(c1))) {
       current = { nom: c0, suffixe: "", comptes: [] };
       entities.push(current);
       continue;

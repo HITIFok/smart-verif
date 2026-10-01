@@ -77,6 +77,7 @@ export function detectTransfers(
     ["STMB", "201"],
     ["SOCOTA/LECO", "330"], // compte 512330 de LECOFRUIT (BNILEC)
     ["EVASAN", "140"], // compte 512140 (BOATSA)
+    ["DHL EXPRESS", "120"], // compte 512120
   ]);
   const ownBank = (s: string) => {
     const direct = `512${s}`;
@@ -211,9 +212,19 @@ export function detectTransfers(
         const m = r2(l.debit);
         const baseKey = `${l.tiers || l.compte}|${m}`;
         // Départage par numéro de pièce d'abord, repli sur tiers+montant
-        const cands = [...new Set(
+        let cands = [...new Set(
           paiementClientPiece.get(`${baseKey}|${first.piece}`) ?? paiementClient.get(baseKey) ?? [],
         )];
+        // Dernier recours : quand la pièce TIERS couvre plusieurs clients en
+        // même temps, le libellé de la ligne bancaire nomme souvent le client.
+        if (cands.length > 1) {
+          const lib = `${l.libelle} ${first.libelle}`.toUpperCase();
+          const nommés = cands.filter((c) => {
+            const n = nomParSuffixe.get(c);
+            return n && n.length >= 4 && new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lib);
+          });
+          if (nommés.length === 1) cands = nommés;
+        }
         const s = cands.length === 1 ? cands[0]! : null;
         const src = s ? ownBank(s) : null;
         const common = {
