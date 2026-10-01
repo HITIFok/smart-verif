@@ -77,6 +77,7 @@ export function detectTransfers(
     ["STMB", "201"],
     ["SOCOTA/LECO", "330"], // compte 512330 de LECOFRUIT (BNILEC)
     ["EVASAN", "140"], // compte 512140 (BOATSA)
+    ["DHL EXPRESS", "120"], // compte 512120
   ]);
   const ownBank = (s: string) => {
     const direct = `512${s}`;
