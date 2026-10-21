@@ -1,4 +1,5 @@
 import type { EntryLine } from "./analysis-types";
+import { SHARED_BANK } from "./shared-bank";
 
 export type OperationType = "appel_de_fonds" | "paiement" | "honoraires";
 export type TransferStatus = "a_creer" | "existe_deja" | "manuel";
@@ -51,34 +52,6 @@ export function detectTransfers(
   }
 
   const bankAccounts = new Set(lignes.filter((l) => isBank(l.compte)).map((l) => l.compte));
-  // Entités qui partagent le compte 512 d'une autre entité : nom -> suffixe du compte 512 utilisé
-  const SHARED_BANK = new Map<string, string>([
-    ["PAMF", "190"], // EASY TECH
-    ["EVIOSYS", "600"], // ex-SONOCO, compte 512600
-    ["INGEDATA", "600"],
-    ["CAMUSAT", "600"],
-    ["STELLARIX", "210"], // AITS
-    ["WELIGHT", "220"], // AXIANSS
-    ["MADAGASCO", "220"],
-    ["ATSS", "220"],
-    ["AXIAN UNIVERSITY", "240"], // TOM
-    ["FONDATION AXIAN", "240"],
-    ["SANKO", "260"], // FIRST IMMO
-    ["FOUNDEVER", "700"], // SMARTONE
-    ["KIDS AKADEMY", "800"], // NACRE
-    ["NACRE DIR", "800"],
-    ["TANJAKA FOOD", "350"], // OMNIVEST
-    ["SANLAMALLIANZ AUTOFI", "501"], // compte propre 512501 (BNIALL) depuis 2026
-    ["SANLAMALLIANZ COMPAGNIE", "100"], // 512100 SANLAM
-    ["JBU", "320"], // compte 512320 de BOOST (BNIJB)
-    ["JBS", "320"],
-    ["BOOST", "320"],
-    ["TAMBOHO", "201"], // compte 512201 de TALYS (BOAGTA)
-    ["STMB", "201"],
-    ["SOCOTA/LECO", "330"], // compte 512330 de LECOFRUIT (BNILEC)
-    ["EVASAN", "140"], // compte 512140 (BOATSA)
-    ["DHL EXPRESS", "120"], // compte 512120
-  ]);
   const ownBank = (s: string) => {
     const direct = `512${s}`;
     if (bankAccounts.has(direct)) return direct;

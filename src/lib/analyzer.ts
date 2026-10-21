@@ -6,6 +6,7 @@ import type {
   EntryLine,
 } from "./analysis-types";
 import { detectTransfers } from "./transfers";
+import { SHARED_BANK } from "./shared-bank";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
@@ -126,6 +127,25 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
     soldes.set(l.compte, (soldes.get(l.compte) ?? 0) + l.debit - l.credit);
   }
 
+  // Seuls les comptes 467/460/461/462 sont à solder avec le 512. Chaque
+  // entité a ses propres comptes 46x mais peut partager le 512 d'une autre
+  // (ex. AXIANSS/GES/WELIGHT/MADAGASCO/ATSS/VIA ASSURANCE -> 512220).
+  const bankAccounts = new Set(
+    [...soldes.keys()].filter((c) => c.startsWith("512") || c.startsWith("513")),
+  );
+  const bankSuffixOf = (e: VerifEntity): string => {
+    if (bankAccounts.has(`512${e.suffixe}`)) return e.suffixe;
+    return SHARED_BANK.get(e.nom) ?? e.suffixe;
+  };
+  // Suffixes 46x légitimes pour chaque compte 512 (propriétaire + partageants)
+  const validAfByBank = new Map<string, Set<string>>();
+  for (const e of verif) {
+    const b = bankSuffixOf(e);
+    const set = validAfByBank.get(b) ?? new Set<string>();
+    set.add(e.suffixe);
+    validAfByBank.set(b, set);
+  }
+
   // Group lines by piece
   const pieces = new Map<string, EntryLine[]>();
   for (const l of lignes) {
@@ -161,8 +181,9 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
       const montantTr = round2(trLines.reduce((t, l) => t + l.debit - l.credit, 0));
       if (montantTr === 0 && af.length > 0) continue;
 
-      const afSameClient = af.filter((l) => l.compte.slice(3) === s);
-      const afOther = af.filter((l) => l.compte.slice(3) !== s);
+      const valid = validAfByBank.get(s) ?? new Set([s]);
+      const afSameClient = af.filter((l) => valid.has(l.compte.slice(3)));
+      const afOther = af.filter((l) => !valid.has(l.compte.slice(3)));
       const trOther = tr.filter((l) => l.compte.slice(3) !== s);
 
       if (afOther.length > 0 || trOther.length > 0) {
@@ -244,6 +265,22 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
         famille: family(compte) as "AF" | "TR",
       }))
       .sort((a, b) => a.compte.localeCompare(b.compte));
+
+    // Entité sans 512 propre : son appel de fonds se solde avec le 512 partagé
+    const bs = bankSuffixOf(e);
+    if (bs !== e.suffixe) {
+      const shared = `512${bs}`;
+      const solde = soldes.get(shared);
+      if (solde !== undefined && !comptes.some((c) => c.compte === shared)) {
+        comptes.push({
+          compte: shared,
+          solde: round2(solde),
+          listeVerif: true,
+          famille: "TR",
+        });
+        comptes.sort((a, b) => a.compte.localeCompare(b.compte));
+      }
+    }
 
     for (const c of comptes) {
       if (!c.listeVerif && c.solde !== 0) {
