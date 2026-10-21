@@ -266,6 +266,22 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
       }))
       .sort((a, b) => a.compte.localeCompare(b.compte));
 
+    // Entité sans 512 propre : son appel de fonds se solde avec le 512 partagé
+    const bs = bankSuffixOf(e);
+    if (bs !== e.suffixe) {
+      const shared = `512${bs}`;
+      const solde = soldes.get(shared);
+      if (solde !== undefined && !comptes.some((c) => c.compte === shared)) {
+        comptes.push({
+          compte: shared,
+          solde: round2(solde),
+          listeVerif: true,
+          famille: "TR",
+        });
+        comptes.sort((a, b) => a.compte.localeCompare(b.compte));
+      }
+    }
+
     for (const c of comptes) {
       if (!c.listeVerif && c.solde !== 0) {
         addAnomaly({
