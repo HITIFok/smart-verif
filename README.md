@@ -18,6 +18,19 @@ Déposez le brouillard et la feuille de vérification (le même classeur Verif B
 
 Les journaux `RAN` (à-nouveaux) et les pièces `580001` sont exclus de la détection : ils ne sont pas actionnables.
 
+## Schéma des écritures du cycle appel de fonds
+
+L'application retrace le cycle complet dans l'onglet « Schéma des écritures » (également exporté dans l'Excel) :
+
+| Étape | Journal | Débit | Crédit |
+|---|---|---|---|
+| 1. Appel de fonds | TIERS | 460 (client) | 467 (client) |
+| 2. Paiement prestataire / client | TIERS | 467 (client) | 401000 + compte tiers |
+| 3. Paiement prestataire / client | BANQUE | 401000 + compte tiers | 512 |
+| 4. Arrivée des fonds | BANQUE | 512 | 460 (client) |
+
+Le compte 401000 + compte tiers matérialise le paiement des prestataires ou clients : les écritures conformes à ce schéma (étapes 2 et 3) ne sont plus signalées comme anomalies. L'arrivée des fonds en banque (512 Débit / 460 Crédit) solde le cycle.
+
 ## Développement
 
 ```sh

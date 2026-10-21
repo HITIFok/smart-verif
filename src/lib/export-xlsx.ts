@@ -1,5 +1,7 @@
 import * as XLSX from "xlsx";
 import type { AnalysisResult } from "./analysis-types";
+import { OPERATION_LABELS } from "./transfers";
+import { SCHEMA_ECRITURES } from "./schema-ecritures";
 
 const LABELS: Record<string, string> = {
   mauvais_client: "Mauvais client",
@@ -39,7 +41,7 @@ export function exportAnomalies(result: AnalysisResult) {
     const statut =
       t.statut === "a_creer" ? "À créer" : t.statut === "existe_deja" ? "Déjà passée" : "Manuel";
     const base = {
-      Opération: t.type,
+      Opération: OPERATION_LABELS[t.type] ?? t.type,
       Client: t.entite,
       "Pièce source": t.piece,
       Date: t.date,
@@ -69,6 +71,17 @@ export function exportAnomalies(result: AnalysisResult) {
     ];
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr), "Comptes à comptes 580001");
+
+  const schema = SCHEMA_ECRITURES.flatMap((e) =>
+    e.lignes.map((l) => ({
+      Journal: e.journal,
+      Étape: `${e.etape}. ${e.titre}`,
+      Sens: l.sens,
+      Compte: l.complement ? `${l.compte} ${l.complement}` : l.compte,
+      Rôle: l.note,
+    })),
+  );
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(schema), "Schéma des écritures");
 
   XLSX.writeFile(wb, `Anomalies_BG_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }

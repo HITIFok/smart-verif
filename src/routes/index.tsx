@@ -14,6 +14,9 @@ import { FileDrop } from "@/components/FileDrop";
 import { exportAnomalies } from "@/lib/export-xlsx";
 import type { AnalysisResult, AnomalyType } from "@/lib/analysis-types";
 import type { TransferProposal } from "@/lib/transfers";
+import { OPERATION_LABELS } from "@/lib/transfers";
+import { CYCLE_CHAIN, SCHEMA_ECRITURES } from "@/lib/schema-ecritures";
+import type { EtapeSchema } from "@/lib/schema-ecritures";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -53,7 +56,7 @@ function Index() {
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [tab, setTab] = useState<"clients" | "ecritures" | "transferts">("clients");
+  const [tab, setTab] = useState<"clients" | "ecritures" | "transferts" | "schema">("clients");
   const [open, setOpen] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<AnomalyType | "tous">("tous");
   const [filterClient, setFilterClient] = useState<string>("tous");
@@ -193,7 +196,7 @@ function Index() {
           </section>
 
           <div className="mt-8 flex gap-1 border-b border-border">
-            {(["clients", "ecritures", "transferts"] as const).map((t) => (
+            {(["clients", "ecritures", "transferts", "schema"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -207,12 +210,16 @@ function Index() {
                   ? "Tableau de bord par client"
                   : t === "ecritures"
                     ? "Écritures à corriger"
-                    : `Comptes à comptes (${result.transferts.filter((x) => x.statut === "a_creer").length})`}
+                    : t === "transferts"
+                      ? `Comptes à comptes (${result.transferts.filter((x) => x.statut === "a_creer").length})`
+                      : "Schéma des écritures"}
               </button>
             ))}
           </div>
 
-          {tab === "clients" ? (
+          {tab === "schema" ? (
+            <SchemaEcritures />
+          ) : tab === "clients" ? (
             <section className="mt-6 space-y-2">
               {result.entites.map((e) => {
                 const solde = Math.abs(e.ecart) < 0.01;
@@ -434,11 +441,100 @@ function Cell({ label, value, strong }: { label: string; value: number; strong?:
   );
 }
 
-const OP_LABEL: Record<TransferProposal["type"], string> = {
-  appel_de_fonds: "Appel de fonds",
-  paiement: "Paiement",
-  honoraires: "Honoraires",
-};
+function SchemaEcritures() {
+  return (
+    <section className="mt-6">
+      <div className="panel p-5">
+        <p className="text-sm font-semibold">Cycle complet de l'appel de fonds</p>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+          Le cycle se compose de quatre écritures équilibrées. L'écriture de l'appel de fonds se
+          saisit dans TIERS (460 au Débit, 467 au Crédit). Le compte 401000 + compte tiers
+          matérialise le paiement des prestataires ou clients : côté TIERS (467 au Débit, 401000 +
+          compte tiers au Crédit) puis côté banque (401000 + compte tiers au Débit, 512 au Crédit).
+          Lorsque les fonds sont arrivés en banque (512 au Débit, 460 au Crédit), le cycle est
+          soldé. L'analyseur reconnaît ces écritures comme normales.
+        </p>
+        <div className="num mt-4 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+          {CYCLE_CHAIN.map((etape, i) => (
+            <span key={etape} className="flex items-center gap-2">
+              {i > 0 && <ArrowRight className="size-3.5 text-muted-foreground" />}
+              <span className="rounded bg-secondary px-2 py-1 font-semibold">{etape}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {SCHEMA_ECRITURES.map((etape) => (
+          <EtapeCard key={etape.etape} etape={etape} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EtapeCard({ etape }: { etape: EtapeSchema }) {
+  const debit = etape.lignes.filter((l) => l.sens === "Débit");
+  const credit = etape.lignes.filter((l) => l.sens === "Crédit");
+  return (
+    <div className="panel overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <p className="text-sm font-semibold">
+          <span className="num mr-2 text-muted-foreground">Étape {etape.etape}</span>
+          {etape.titre}
+        </p>
+        <span
+          className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+            etape.journal === "TIERS"
+              ? "bg-primary/10 text-primary"
+              : "bg-secondary text-secondary-foreground"
+          }`}
+        >
+          {etape.journal}
+        </span>
+      </div>
+      <div className="grid divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        <div className="p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Débit
+          </p>
+          {debit.map((l) => (
+            <div key={l.sens + l.compte} className="mt-2">
+              <p className="num text-sm font-bold">
+                {l.compte}
+                {l.complement && (
+                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                    {l.complement}
+                  </span>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">{l.note}</p>
+            </div>
+          ))}
+        </div>
+        <div className="p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Crédit
+          </p>
+          {credit.map((l) => (
+            <div key={l.sens + l.compte} className="mt-2">
+              <p className="num text-sm font-bold">
+                {l.compte}
+                {l.complement && (
+                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                    {l.complement}
+                  </span>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">{l.note}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const OP_LABEL = OPERATION_LABELS;
 const ST_LABEL: Record<TransferProposal["statut"], string> = {
   a_creer: "À créer",
   existe_deja: "Déjà passée",

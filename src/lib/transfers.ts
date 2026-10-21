@@ -4,6 +4,13 @@ import { SHARED_BANK } from "./shared-bank";
 export type OperationType = "appel_de_fonds" | "paiement" | "honoraires";
 export type TransferStatus = "a_creer" | "existe_deja" | "manuel";
 
+/** Libellés affichables des opérations détectées (UI + export Excel). */
+export const OPERATION_LABELS: Record<OperationType, string> = {
+  appel_de_fonds: "Arrivée des fonds",
+  paiement: "Paiement",
+  honoraires: "Honoraires",
+};
+
 export interface TransferLine {
   compte: string;
   sens: "D" | "C";
@@ -170,7 +177,9 @@ export function detectTransfers(
     for (const l of g) {
       const p3 = l.compte.slice(0, 3);
 
-      // 1. Appel de fonds : 460 C / 512 D
+      // 4. Arrivée des fonds en banque : 460 C / 512 D (schéma du cycle :
+      // l'appel de fonds lui-même s'écrit en TIERS 460 D / 467 C ; ici on
+      // détecte les fonds arrivés sur une autre banque que celle du client).
       if (p3 === "460" && l.credit) {
         const s = l.compte.slice(3);
         const m = r2(l.credit);
@@ -205,12 +214,13 @@ export function detectTransfers(
               banqueSource: bank,
               banqueDestination: dest,
             },
-            `Fonds de l'appel ${l.compte} reçus sur ${bank} (${first.journal}) au lieu de ${dest}`,
+            `Fonds de l'appel ${l.compte} arrivés sur ${bank} (${first.journal}) au lieu de ${dest}`,
           );
         }
       }
 
-      // 2. Paiement prestataire : 401 D / 512-513 C
+      // 3. Paiement prestataire côté banque : 401000 + tiers D / 512-513 C
+      // (étape 3 du schéma du cycle appel de fonds).
       if (p3 === "401" && l.debit) {
         const m = r2(l.debit);
         const baseKey = `${l.tiers || l.compte}|${m}`;

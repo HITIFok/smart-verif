@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import type { AnalysisResult, Anomaly, EntitySummary, EntryLine } from "./analysis-types";
 import { detectTransfers } from "./transfers";
 import { SHARED_BANK } from "./shared-bank";
+import { matchPieceSchema } from "./schema-ecritures";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
@@ -315,10 +316,15 @@ export function analyse(
       }
 
       if (afSameClient.length === 0) {
+        // Paiement prestataire / client côté banque (schéma du cycle appel de
+        // fonds : 401000 + compte tiers au Débit / 512 au Crédit) : écriture
+        // normale du cycle, pas une anomalie.
+        if (matchPieceSchema(group) === "paiement_banque") continue;
         const contreparties = [
           ...new Set(group.filter((l) => !family(l.compte)).map((l) => l.compte)),
         ];
         if (contreparties.length === 0 && montantTr === 0) continue;
+        const has401 = contreparties.some((c) => c.startsWith("401"));
         addAnomaly({
           type: "hors_perimetre",
           entite: ent.nom,
@@ -329,9 +335,13 @@ export function analyse(
           libelle: trLines[0]?.libelle ?? first.libelle,
           comptes: [...new Set(group.map((l) => l.compte))].join(", "),
           montant: montantTr,
-          detail: contreparties.length
-            ? `Contrepartie hors 460/461/462/467 : ${contreparties.join(", ")}`
-            : "Aucune contrepartie d'appel de fonds sur cette pièce",
+          detail:
+            (contreparties.length
+              ? `Contrepartie hors 460/461/462/467 : ${contreparties.join(", ")}`
+              : "Aucune contrepartie d'appel de fonds sur cette pièce") +
+            (has401
+              ? " — un paiement légitime s'écrit 401000 + compte tiers au Débit / 512 au Crédit"
+              : ""),
           lignes: group,
         });
         continue;
