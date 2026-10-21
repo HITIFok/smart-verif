@@ -181,8 +181,9 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
       const montantTr = round2(trLines.reduce((t, l) => t + l.debit - l.credit, 0));
       if (montantTr === 0 && af.length > 0) continue;
 
-      const afSameClient = af.filter((l) => l.compte.slice(3) === s);
-      const afOther = af.filter((l) => l.compte.slice(3) !== s);
+      const valid = validAfByBank.get(s) ?? new Set([s]);
+      const afSameClient = af.filter((l) => valid.has(l.compte.slice(3)));
+      const afOther = af.filter((l) => !valid.has(l.compte.slice(3)));
       const trOther = tr.filter((l) => l.compte.slice(3) !== s);
 
       if (afOther.length > 0 || trOther.length > 0) {
