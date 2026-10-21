@@ -38,6 +38,16 @@ npm i
 npm run dev
 ```
 
+## Déploiement GitHub Pages
+
+L'application est publiée en statique (mode SPA) sur https://hitifok.github.io/smart-verif/ :
+
+```sh
+GH_PAGES=1 npm run build   # coquille SPA + base /smart-verif/ dans .output/public
+```
+
+Le contenu de `.output/public` (avec `_shell.html` renommé en `index.html` et un fichier `.nojekyll`) est publié sur la branche `gh-pages`. Sans `GH_PAGES=1`, le build reste le build serveur standard (Cloudflare/Lovable).
+
 This project was built with [Lovable](https://lovable.dev).
 
 ## Build with Lovable

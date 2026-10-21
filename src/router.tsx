@@ -10,6 +10,8 @@ export const getRouter = () => {
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
+    // GitHub Pages : URL projet servie sous /smart-verif/ (base Vite) ; racine sinon.
+    basepath: import.meta.env.BASE_URL.replace(/\/$/, "") || "/",
   });
 
   return router;
