@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import type { AnalysisResult } from "./analysis-types";
 import { OPERATION_LABELS } from "./transfers";
 import { SCHEMA_ECRITURES } from "./schema-ecritures";
+import { decrireComptes, PLAN_COMPTABLE, PLAN_TIERS } from "./referentiel";
 
 const LABELS: Record<string, string> = {
   mauvais_client: "Mauvais client",
@@ -32,6 +33,7 @@ export function exportAnomalies(result: AnalysisResult) {
     Date: a.date,
     Libellé: a.libelle,
     Comptes: a.comptes,
+    "Libellés comptes (plan)": decrireComptes(a.comptes, ", "),
     Montant: a.montant,
     Diagnostic: a.detail,
   }));
@@ -82,6 +84,20 @@ export function exportAnomalies(result: AnalysisResult) {
     })),
   );
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(schema), "Schéma des écritures");
+
+  const planComptable = PLAN_COMPTABLE.map((c) => ({
+    "N° compte": c.numero,
+    Intitulé: c.intitule,
+    Nature: c.nature,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(planComptable), "Plan comptable");
+
+  const planTiers = PLAN_TIERS.map((t) => ({
+    "Code tiers": t.code,
+    Type: t.type,
+    Intitulé: t.intitule,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(planTiers), "Plan tiers");
 
   XLSX.writeFile(wb, `Anomalies_BG_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }

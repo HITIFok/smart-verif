@@ -3,6 +3,7 @@ import type { AnalysisResult, Anomaly, EntitySummary, EntryLine } from "./analys
 import { detectTransfers } from "./transfers";
 import { SHARED_BANK } from "./shared-bank";
 import { matchPieceSchema } from "./schema-ecritures";
+import { avecLibelle } from "./referentiel";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
@@ -337,7 +338,7 @@ export function analyse(
           montant: montantTr,
           detail:
             (contreparties.length
-              ? `Contrepartie hors 460/461/462/467 : ${contreparties.join(", ")}`
+              ? `Contrepartie hors 460/461/462/467 : ${contreparties.map(avecLibelle).join(", ")}`
               : "Aucune contrepartie d'appel de fonds sur cette pièce") +
             (has401
               ? " — un paiement légitime s'écrit 401000 + compte tiers au Débit / 512 au Crédit"

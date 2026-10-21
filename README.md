@@ -31,6 +31,16 @@ L'application retrace le cycle complet dans l'onglet « Schéma des écritures �
 
 Le compte 401000 + compte tiers matérialise le paiement des prestataires ou clients : les écritures conformes à ce schéma (étapes 2 et 3) ne sont plus signalées comme anomalies. L'arrivée des fonds en banque (512 Débit / 460 Crédit) solde le cycle.
 
+## Référentiel : plan comptable & plan tiers Sage
+
+Le plan comptable (434 comptes) et le plan tiers (836 tiers) de **MCI CARE MADAGASCAR** (Sage 100cloud Comptabilité, tirage du 21/10/26) sont intégrés à l'application :
+
+- **Onglet « Référentiel comptable »** : consultation et recherche dans les deux plans, avec filtres par famille comptable (Capitaux, Immobilisations, Fournisseurs, Clients — fonds à encaisser, transit 467, Trésorerie, Charges, Produits…) ou par type de tiers (Fournisseur / Client / Autre / Salarié).
+- **Libellés automatiques** partout : chaque numéro de compte affiché dans le tableau de bord, les anomalies, les comptes à comptes et le diagnostic hors périmètre est accompagné de son intitulé exact (ex. `460140 — TELMA SA à encaisser`, `512140 — BOA TELMA`). Les comptes collectifs `401`/`411` + code tiers sont résolus via le plan tiers (ex. `4011013 — CENHOSOA`).
+- **Export Excel** : deux feuilles supplémentaires « Plan comptable » et « Plan tiers », et une colonne « Libellés comptes (plan) » dans les écritures à corriger.
+
+Les données sont générées depuis les PDF Sage (`Plan_comptable.pdf`, `Plan_tiers.pdf`) via `scripts/parse_plans.py` → `src/lib/plan-comptable-data.ts` et `src/lib/plan-tiers-data.ts`.
+
 ## Développement
 
 ```sh

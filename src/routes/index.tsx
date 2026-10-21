@@ -17,6 +17,16 @@ import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
 import { CYCLE_CHAIN, SCHEMA_ECRITURES } from "@/lib/schema-ecritures";
 import type { EtapeSchema } from "@/lib/schema-ecritures";
+import {
+  avecLibelle,
+  decrireCompte,
+  decrireComptes,
+  familleCompte,
+  NB_COMPTES_PLAN,
+  NB_TIERS_PLAN,
+  PLAN_COMPTABLE,
+  PLAN_TIERS,
+} from "@/lib/referentiel";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -56,7 +66,9 @@ function Index() {
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [tab, setTab] = useState<"clients" | "ecritures" | "transferts" | "schema">("clients");
+  const [tab, setTab] = useState<"clients" | "ecritures" | "transferts" | "schema" | "referentiel">(
+    "clients",
+  );
   const [open, setOpen] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<AnomalyType | "tous">("tous");
   const [filterClient, setFilterClient] = useState<string>("tous");
@@ -164,230 +176,242 @@ function Index() {
       )}
 
       {result && (
-        <>
-          <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat
-              icon={<Users className="size-4" />}
-              label="Clients contrôlés"
-              value={String(result.stats.entites)}
-              sub={`${result.stats.lignes.toLocaleString("fr-FR")} lignes analysées`}
-            />
-            <Stat
-              icon={<ShieldCheck className="size-4" />}
-              label="Contrôles soldés"
-              value={`${result.stats.soldees} / ${result.stats.entites}`}
-              sub="Écart inférieur à 0,01"
-              tone="success"
-            />
-            <Stat
-              icon={<AlertTriangle className="size-4" />}
-              label="Écritures suspectes"
-              value={result.anomalies.length.toLocaleString("fr-FR")}
-              sub={`${result.stats.parType.mauvais_client} mauvais client · ${result.stats.parType.hors_perimetre} hors périmètre · ${result.stats.parType.compte_oublie} comptes oubliés · ${result.stats.parType.ecart_balance} écarts balance`}
-              tone="warning"
-            />
-            <Stat
-              icon={<ArrowRight className="size-4" />}
-              label="Écart total (valeur absolue)"
-              value={fmt(result.stats.ecartTotal)}
-              sub="Somme des écarts par client"
-              tone="destructive"
-            />
-          </section>
+        <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat
+            icon={<Users className="size-4" />}
+            label="Clients contrôlés"
+            value={String(result.stats.entites)}
+            sub={`${result.stats.lignes.toLocaleString("fr-FR")} lignes analysées`}
+          />
+          <Stat
+            icon={<ShieldCheck className="size-4" />}
+            label="Contrôles soldés"
+            value={`${result.stats.soldees} / ${result.stats.entites}`}
+            sub="Écart inférieur à 0,01"
+            tone="success"
+          />
+          <Stat
+            icon={<AlertTriangle className="size-4" />}
+            label="Écritures suspectes"
+            value={result.anomalies.length.toLocaleString("fr-FR")}
+            sub={`${result.stats.parType.mauvais_client} mauvais client · ${result.stats.parType.hors_perimetre} hors périmètre · ${result.stats.parType.compte_oublie} comptes oubliés · ${result.stats.parType.ecart_balance} écarts balance`}
+            tone="warning"
+          />
+          <Stat
+            icon={<ArrowRight className="size-4" />}
+            label="Écart total (valeur absolue)"
+            value={fmt(result.stats.ecartTotal)}
+            sub="Somme des écarts par client"
+            tone="destructive"
+          />
+        </section>
+      )}
 
-          <div className="mt-8 flex gap-1 border-b border-border">
-            {(["clients", "ecritures", "transferts", "schema"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
-                  tab === t
-                    ? "border-accent text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {t === "clients"
-                  ? "Tableau de bord par client"
-                  : t === "ecritures"
-                    ? "Écritures à corriger"
-                    : t === "transferts"
-                      ? `Comptes à comptes (${result.transferts.filter((x) => x.statut === "a_creer").length})`
-                      : "Schéma des écritures"}
-              </button>
-            ))}
-          </div>
+      <div className="mt-8 flex gap-1 overflow-x-auto border-b border-border">
+        {(["clients", "ecritures", "transferts", "schema", "referentiel"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+              tab === t
+                ? "border-accent text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t === "clients"
+              ? "Tableau de bord par client"
+              : t === "ecritures"
+                ? "Écritures à corriger"
+                : t === "transferts"
+                  ? `Comptes à comptes (${result?.transferts.filter((x) => x.statut === "a_creer").length ?? 0})`
+                  : t === "schema"
+                    ? "Schéma des écritures"
+                    : "Référentiel comptable"}
+          </button>
+        ))}
+      </div>
 
-          {tab === "schema" ? (
-            <SchemaEcritures />
-          ) : tab === "clients" ? (
-            <section className="mt-6 space-y-2">
-              {result.entites.map((e) => {
-                const solde = Math.abs(e.ecart) < 0.01;
-                const isOpen = open === e.suffixe + e.nom;
-                return (
-                  <div key={e.suffixe + e.nom} className="panel overflow-hidden">
-                    <button
-                      onClick={() => setOpen(isOpen ? null : e.suffixe + e.nom)}
-                      className="grid w-full grid-cols-2 items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60 md:grid-cols-[1.6fr_repeat(3,1fr)_auto]"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`size-2 rounded-full ${solde ? "bg-success" : "bg-destructive"}`}
-                        />
-                        <div>
-                          <p className="font-semibold">{e.nom}</p>
-                          <p className="num text-xs text-muted-foreground">
-                            suffixe {e.suffixe} · {e.anomalies} anomalie(s)
-                          </p>
-                        </div>
-                      </div>
-                      <Cell label="Appel de fonds" value={e.appelDeFonds} />
-                      <Cell label="Trésorerie" value={e.tresorerie} />
-                      <Cell label="Écart" value={e.ecart} strong />
-                      <ChevronDown
-                        className={`hidden size-4 text-muted-foreground transition-transform md:block ${isOpen ? "rotate-180" : ""}`}
-                      />
-                    </button>
-                    {isOpen && (
-                      <div className="border-t border-border bg-secondary/40 px-4 py-3">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Comptes du client
-                        </p>
-                        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
-                          {e.comptes.map((c) => (
-                            <div
-                              key={c.compte}
-                              className="flex items-center justify-between rounded-md bg-card px-3 py-1.5 text-sm"
-                            >
-                              <span className="num">
-                                {c.compte}
-                                {!c.listeVerif && (
-                                  <span className="ml-2 rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-foreground">
-                                    hors contrôle
-                                  </span>
-                                )}
-                                {c.partage && (
-                                  <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
-                                    partagé
-                                  </span>
-                                )}
-                              </span>
-                              <span className="num">{fmt(c.solde)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <button
-                          onClick={() => {
-                            setTab("ecritures");
-                            setFilterClient(e.nom);
-                            setFilterType("tous");
-                            setLimit(100);
-                          }}
-                          className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-accent-foreground underline decoration-accent underline-offset-4"
-                        >
-                          Voir les écritures à corriger <ArrowRight className="size-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </section>
-          ) : tab === "transferts" ? (
-            <Transferts result={result} />
-          ) : (
-            <section className="mt-6">
-              <div className="mb-4 flex flex-wrap gap-3">
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Rechercher un libellé, une pièce, un compte…"
-                  className="min-w-56 flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
-                />
-                <select
-                  value={filterClient}
-                  onChange={(e) => setFilterClient(e.target.value)}
-                  className="rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+      {tab === "schema" ? (
+        <SchemaEcritures />
+      ) : tab === "referentiel" ? (
+        <Referentiel />
+      ) : !result ? (
+        <p className="panel mt-6 px-4 py-10 text-center text-sm text-muted-foreground">
+          Déposez le brouillard et la feuille de vérification puis lancez l'analyse : le tableau de
+          bord par client, les écritures à corriger et les comptes à comptes s'afficheront ici.
+        </p>
+      ) : tab === "clients" ? (
+        <section className="mt-6 space-y-2">
+          {result.entites.map((e) => {
+            const solde = Math.abs(e.ecart) < 0.01;
+            const isOpen = open === e.suffixe + e.nom;
+            return (
+              <div key={e.suffixe + e.nom} className="panel overflow-hidden">
+                <button
+                  onClick={() => setOpen(isOpen ? null : e.suffixe + e.nom)}
+                  className="grid w-full grid-cols-2 items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60 md:grid-cols-[1.6fr_repeat(3,1fr)_auto]"
                 >
-                  <option value="tous">Tous les clients</option>
-                  {result.entites.map((e) => (
-                    <option key={e.nom + e.suffixe} value={e.nom}>
-                      {e.nom}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value as AnomalyType | "tous")}
-                  className="rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
-                >
-                  <option value="tous">Tous les types</option>
-                  {Object.entries(TYPE_LABEL).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <p className="mb-3 text-sm text-muted-foreground">
-                {anomalies.length.toLocaleString("fr-FR")} écriture(s) détectée(s)
-              </p>
-
-              <div className="panel divide-y divide-border">
-                {anomalies.slice(0, limit).map((a) => (
-                  <div key={a.id} className="grid gap-2 px-4 py-3 md:grid-cols-[auto_1fr_auto]">
+                  <div className="flex items-center gap-2">
                     <span
-                      className={`h-fit rounded px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                        a.type === "mauvais_client"
-                          ? "bg-destructive/12 text-destructive"
-                          : a.type === "hors_perimetre"
-                            ? "bg-warning/20 text-accent-foreground"
-                            : a.type === "ecart_balance"
-                              ? "bg-warning/15 text-destructive"
-                              : "bg-primary/10 text-primary"
-                      }`}
-                    >
-                      {TYPE_LABEL[a.type]}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold">
-                        {a.entite}
-                        {a.journal && (
-                          <span className="num ml-2 font-normal text-muted-foreground">
-                            {a.journal} · pièce {a.piece} · {a.date}
-                          </span>
-                        )}
+                      className={`size-2 rounded-full ${solde ? "bg-success" : "bg-destructive"}`}
+                    />
+                    <div>
+                      <p className="font-semibold">{e.nom}</p>
+                      <p className="num text-xs text-muted-foreground">
+                        suffixe {e.suffixe} · {e.anomalies} anomalie(s)
                       </p>
-                      <p className="truncate text-sm text-muted-foreground">{a.libelle}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{a.detail}</p>
-                      <p className="num mt-1 text-xs text-muted-foreground">{a.comptes}</p>
                     </div>
-                    <span
-                      className={`num h-fit text-right text-sm font-semibold ${a.montant < 0 ? "text-destructive" : ""}`}
-                    >
-                      {fmt(a.montant)}
-                    </span>
                   </div>
-                ))}
-                {anomalies.length === 0 && (
-                  <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                    Aucune écriture ne correspond à ces filtres.
-                  </p>
+                  <Cell label="Appel de fonds" value={e.appelDeFonds} />
+                  <Cell label="Trésorerie" value={e.tresorerie} />
+                  <Cell label="Écart" value={e.ecart} strong />
+                  <ChevronDown
+                    className={`hidden size-4 text-muted-foreground transition-transform md:block ${isOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {isOpen && (
+                  <div className="border-t border-border bg-secondary/40 px-4 py-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Comptes du client
+                    </p>
+                    <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                      {e.comptes.map((c) => (
+                        <div
+                          key={c.compte}
+                          className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-card px-3 py-1.5 text-sm"
+                        >
+                          <span className="num flex min-w-0 items-center">
+                            <span className="shrink-0">{c.compte}</span>
+                            <span className="ml-2 truncate text-xs font-normal text-muted-foreground">
+                              {decrireCompte(c.compte)}
+                            </span>
+                            {!c.listeVerif && (
+                              <span className="ml-2 shrink-0 rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-foreground">
+                                hors contrôle
+                              </span>
+                            )}
+                            {c.partage && (
+                              <span className="ml-2 shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                                partagé
+                              </span>
+                            )}
+                          </span>
+                          <span className="num shrink-0">{fmt(c.solde)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setTab("ecritures");
+                        setFilterClient(e.nom);
+                        setFilterType("tous");
+                        setLimit(100);
+                      }}
+                      className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-accent-foreground underline decoration-accent underline-offset-4"
+                    >
+                      Voir les écritures à corriger <ArrowRight className="size-3.5" />
+                    </button>
+                  </div>
                 )}
               </div>
+            );
+          })}
+        </section>
+      ) : tab === "transferts" ? (
+        <Transferts result={result} />
+      ) : (
+        <section className="mt-6">
+          <div className="mb-4 flex flex-wrap gap-3">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher un libellé, une pièce, un compte…"
+              className="min-w-56 flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+            <select
+              value={filterClient}
+              onChange={(e) => setFilterClient(e.target.value)}
+              className="rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+            >
+              <option value="tous">Tous les clients</option>
+              {result.entites.map((e) => (
+                <option key={e.nom + e.suffixe} value={e.nom}>
+                  {e.nom}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as AnomalyType | "tous")}
+              className="rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+            >
+              <option value="tous">Tous les types</option>
+              {Object.entries(TYPE_LABEL).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              {anomalies.length > limit && (
-                <button
-                  onClick={() => setLimit((l) => l + 200)}
-                  className="mt-4 w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+          <p className="mb-3 text-sm text-muted-foreground">
+            {anomalies.length.toLocaleString("fr-FR")} écriture(s) détectée(s)
+          </p>
+
+          <div className="panel divide-y divide-border">
+            {anomalies.slice(0, limit).map((a) => (
+              <div key={a.id} className="grid gap-2 px-4 py-3 md:grid-cols-[auto_1fr_auto]">
+                <span
+                  className={`h-fit rounded px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                    a.type === "mauvais_client"
+                      ? "bg-destructive/12 text-destructive"
+                      : a.type === "hors_perimetre"
+                        ? "bg-warning/20 text-accent-foreground"
+                        : a.type === "ecart_balance"
+                          ? "bg-warning/15 text-destructive"
+                          : "bg-primary/10 text-primary"
+                  }`}
                 >
-                  Afficher plus ({anomalies.length - limit} restantes)
-                </button>
-              )}
-            </section>
+                  {TYPE_LABEL[a.type]}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {a.entite}
+                    {a.journal && (
+                      <span className="num ml-2 font-normal text-muted-foreground">
+                        {a.journal} · pièce {a.piece} · {a.date}
+                      </span>
+                    )}
+                  </p>
+                  <p className="truncate text-sm text-muted-foreground">{a.libelle}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{a.detail}</p>
+                  <p className="num mt-1 text-xs text-muted-foreground">
+                    {decrireComptes(a.comptes)}
+                  </p>
+                </div>
+                <span
+                  className={`num h-fit text-right text-sm font-semibold ${a.montant < 0 ? "text-destructive" : ""}`}
+                >
+                  {fmt(a.montant)}
+                </span>
+              </div>
+            ))}
+            {anomalies.length === 0 && (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Aucune écriture ne correspond à ces filtres.
+              </p>
+            )}
+          </div>
+
+          {anomalies.length > limit && (
+            <button
+              onClick={() => setLimit((l) => l + 200)}
+              className="mt-4 w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+            >
+              Afficher plus ({anomalies.length - limit} restantes)
+            </button>
           )}
-        </>
+        </section>
       )}
     </main>
   );
@@ -468,6 +492,174 @@ function SchemaEcritures() {
           <EtapeCard key={etape.etape} etape={etape} />
         ))}
       </div>
+    </section>
+  );
+}
+
+const TYPE_TIERS_LABEL: Record<string, string> = {
+  Four: "Fournisseur",
+  Client: "Client",
+  Autre: "Autre",
+  Salar: "Salarié",
+};
+
+function Referentiel() {
+  const [vue, setVue] = useState<"comptes" | "tiers">("comptes");
+  const [q, setQ] = useState("");
+  const [filtre, setFiltre] = useState("toutes");
+  const [limit, setLimit] = useState(150);
+
+  const norm = q.trim().toLowerCase();
+
+  const familles = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of PLAN_COMPTABLE) {
+      const f = familleCompte(c.numero);
+      counts.set(f, (counts.get(f) ?? 0) + 1);
+    }
+    return [...counts.entries()];
+  }, []);
+
+  const comptes = useMemo(
+    () =>
+      PLAN_COMPTABLE.filter(
+        (c) =>
+          (filtre === "toutes" || familleCompte(c.numero) === filtre) &&
+          (!norm ||
+            c.numero.includes(norm) ||
+            c.intitule.toLowerCase().includes(norm) ||
+            c.nature.toLowerCase().includes(norm)),
+      ),
+    [norm, filtre],
+  );
+
+  const tiers = useMemo(
+    () =>
+      PLAN_TIERS.filter(
+        (t) =>
+          (filtre === "toutes" || t.type === filtre) &&
+          (!norm || t.code.toLowerCase().includes(norm) || t.intitule.toLowerCase().includes(norm)),
+      ),
+    [norm, filtre],
+  );
+
+  const rows = vue === "comptes" ? comptes : tiers;
+  const sel =
+    "rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent";
+  const badge =
+    "h-fit rounded bg-secondary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
+
+  return (
+    <section className="mt-6">
+      <div className="panel p-5">
+        <p className="text-sm font-semibold">Plan comptable & plan tiers — Sage 100cloud</p>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+          Référentiel MCI CARE MADAGASCAR importé des états Sage : {NB_COMPTES_PLAN} comptes et{" "}
+          {NB_TIERS_PLAN} tiers. Les libellés du plan s'affichent automatiquement sur les comptes du
+          tableau de bord, des anomalies, des comptes à comptes et de l'export Excel.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(["comptes", "tiers"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => {
+                setVue(v);
+                setFiltre("toutes");
+                setLimit(150);
+              }}
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                vue === v
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-border bg-card hover:border-accent"
+              }`}
+            >
+              {v === "comptes"
+                ? `Plan comptable (${NB_COMPTES_PLAN})`
+                : `Plan tiers (${NB_TIERS_PLAN})`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-4 mt-4 flex flex-wrap gap-3">
+        <input
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setLimit(150);
+          }}
+          placeholder={
+            vue === "comptes"
+              ? "Rechercher un n° de compte ou un intitulé…"
+              : "Rechercher un code ou un intitulé de tiers…"
+          }
+          className="min-w-56 flex-1 rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+        <select
+          value={filtre}
+          onChange={(e) => {
+            setFiltre(e.target.value);
+            setLimit(150);
+          }}
+          className={sel}
+        >
+          <option value="toutes">Toutes les familles</option>
+          {vue === "comptes"
+            ? familles.map(([f, n]) => (
+                <option key={f} value={f}>
+                  {f} ({n})
+                </option>
+              ))
+            : Object.entries(TYPE_TIERS_LABEL).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v} ({PLAN_TIERS.filter((t) => t.type === k).length})
+                </option>
+              ))}
+        </select>
+      </div>
+
+      <p className="mb-3 text-sm text-muted-foreground">
+        {rows.length.toLocaleString("fr-FR")} {vue === "comptes" ? "compte(s)" : "tier(s)"}
+        {rows.length > limit && ` — affichage limité à ${limit}`}
+      </p>
+
+      <div className="panel divide-y divide-border">
+        {vue === "comptes"
+          ? comptes.slice(0, limit).map((c) => (
+              <div
+                key={c.numero}
+                className="grid gap-1 px-4 py-2 sm:grid-cols-[110px_1fr_auto] sm:items-center"
+              >
+                <span className="num text-sm font-semibold">{c.numero}</span>
+                <span className="truncate text-sm">{c.intitule}</span>
+                <span className={badge}>{c.nature || familleCompte(c.numero)}</span>
+              </div>
+            ))
+          : tiers.slice(0, limit).map((t) => (
+              <div
+                key={`${t.type}-${t.code}`}
+                className="grid gap-1 px-4 py-2 sm:grid-cols-[140px_110px_1fr] sm:items-center"
+              >
+                <span className="num text-sm font-semibold">{t.code}</span>
+                <span className={`${badge} w-fit`}>{TYPE_TIERS_LABEL[t.type] ?? t.type}</span>
+                <span className="truncate text-sm">{t.intitule}</span>
+              </div>
+            ))}
+        {rows.length === 0 && (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            Aucun résultat pour cette recherche.
+          </p>
+        )}
+      </div>
+
+      {rows.length > limit && (
+        <button
+          onClick={() => setLimit((l) => l + 250)}
+          className="mt-4 w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+        >
+          Afficher plus ({rows.length - limit} restantes)
+        </button>
+      )}
     </section>
   );
 }
@@ -603,11 +795,11 @@ function Transferts({ result }: { result: AnalysisResult }) {
                 <div className="num mt-2 grid gap-1 text-xs sm:grid-cols-2">
                   <div className="rounded bg-secondary/60 px-2 py-1">
                     Envoyeur ({t.journalSource}) :{" "}
-                    {t.envoyeur.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
+                    {t.envoyeur.map((l) => `${avecLibelle(l.compte)} ${l.sens}`).join(" / ")}
                   </div>
                   <div className="rounded bg-secondary/60 px-2 py-1">
                     Réceptionnaire ({t.journalDestination}) :{" "}
-                    {t.receptionnaire.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
+                    {t.receptionnaire.map((l) => `${avecLibelle(l.compte)} ${l.sens}`).join(" / ")}
                   </div>
                 </div>
               )}
