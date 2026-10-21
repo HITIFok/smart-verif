@@ -1,6 +1,6 @@
 import type { TransferProposal } from "./transfers";
 
-export type AnomalyType = "mauvais_client" | "hors_perimetre" | "compte_oublie";
+export type AnomalyType = "mauvais_client" | "hors_perimetre" | "compte_oublie" | "ecart_balance";
 
 export interface EntryLine {
   journal: string;
@@ -36,7 +36,14 @@ export interface EntitySummary {
   ecart: number;
   anomalies: number;
   montantAnomalies: number;
-  comptes: { compte: string; solde: number; listeVerif: boolean; famille: "AF" | "TR" }[];
+  comptes: {
+    compte: string;
+    solde: number;
+    listeVerif: boolean;
+    famille: "AF" | "TR";
+    /** Banque partagée : affichée à titre informatif, exclue de l'écart (déjà comptée chez son propriétaire). */
+    partage?: boolean;
+  }[];
 }
 
 export interface AnalysisResult {

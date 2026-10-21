@@ -96,7 +96,11 @@ export function detectTransfers(
   const paiementClientPiece = new Map<string, string[]>();
   for (const g of pieces.values()) {
     if (g[0]?.journal !== "TIERS") continue;
-    const s467 = [...new Set(g.filter((l) => l.compte.startsWith("467") && l.debit).map((l) => l.compte.slice(3)))];
+    const s467 = [
+      ...new Set(
+        g.filter((l) => l.compte.startsWith("467") && l.debit).map((l) => l.compte.slice(3)),
+      ),
+    ];
     if (s467.length === 0) continue;
     for (const l of g) {
       if (!l.compte.startsWith("401") || !l.credit) continue;
@@ -156,7 +160,12 @@ export function detectTransfers(
     const banks = [...new Set(g.filter((l) => isBank(l.compte)).map((l) => l.compte))];
     if (banks.length === 0) continue;
     const bank = banks.length === 1 ? banks[0]! : null;
-    const base = { journalSource: "", piece: first.piece, date: first.date, libelle: first.libelle };
+    const base = {
+      journalSource: "",
+      piece: first.piece,
+      date: first.date,
+      libelle: first.libelle,
+    };
 
     for (const l of g) {
       const p3 = l.compte.slice(0, 3);
@@ -168,15 +177,36 @@ export function detectTransfers(
         const dest = ownBank(s);
         const entite = nomParSuffixe.get(s) ?? `suffixe ${s}`;
         const common = {
-          ...base, type: "appel_de_fonds" as const, entite, journalDestination: first.journal,
-          compteTiers: l.compte, montant: m,
+          ...base,
+          type: "appel_de_fonds" as const,
+          entite,
+          journalDestination: first.journal,
+          compteTiers: l.compte,
+          montant: m,
         };
         if (!bank || !dest) {
-          push({ ...common, journalSource: "TIERS", banqueSource: bank ?? banks.join("/"), banqueDestination: dest ?? "?" }, "",
-            !bank ? "Plusieurs comptes bancaires sur la pièce" : `Compte 512${s} du client introuvable dans le brouillard`);
+          push(
+            {
+              ...common,
+              journalSource: "TIERS",
+              banqueSource: bank ?? banks.join("/"),
+              banqueDestination: dest ?? "?",
+            },
+            "",
+            !bank
+              ? "Plusieurs comptes bancaires sur la pièce"
+              : `Compte 512${s} du client introuvable dans le brouillard`,
+          );
         } else if (bank !== dest) {
-          push({ ...common, journalSource: first.journal, banqueSource: bank, banqueDestination: dest },
-            `Fonds de l'appel ${l.compte} reçus sur ${bank} (${first.journal}) au lieu de ${dest}`);
+          push(
+            {
+              ...common,
+              journalSource: first.journal,
+              banqueSource: bank,
+              banqueDestination: dest,
+            },
+            `Fonds de l'appel ${l.compte} reçus sur ${bank} (${first.journal}) au lieu de ${dest}`,
+          );
         }
       }
 
@@ -185,36 +215,62 @@ export function detectTransfers(
         const m = r2(l.debit);
         const baseKey = `${l.tiers || l.compte}|${m}`;
         // Départage par numéro de pièce d'abord, repli sur tiers+montant
-        let cands = [...new Set(
-          paiementClientPiece.get(`${baseKey}|${first.piece}`) ?? paiementClient.get(baseKey) ?? [],
-        )];
+        let cands = [
+          ...new Set(
+            paiementClientPiece.get(`${baseKey}|${first.piece}`) ??
+              paiementClient.get(baseKey) ??
+              [],
+          ),
+        ];
         // Dernier recours : quand la pièce TIERS couvre plusieurs clients en
         // même temps, le libellé de la ligne bancaire nomme souvent le client.
         if (cands.length > 1) {
           const lib = `${l.libelle} ${first.libelle}`.toUpperCase();
           const nommés = cands.filter((c) => {
             const n = nomParSuffixe.get(c);
-            return n && n.length >= 4 && new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lib);
+            return (
+              n &&
+              n.length >= 4 &&
+              new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lib)
+            );
           });
           if (nommés.length === 1) cands = nommés;
         }
         const s = cands.length === 1 ? cands[0]! : null;
         const src = s ? ownBank(s) : null;
         const common = {
-          ...base, type: "paiement" as const, entite: s ? nomParSuffixe.get(s) ?? `suffixe ${s}` : "?",
-          journalSource: "TIERS", journalDestination: first.journal,
-          compteTiers: l.tiers ? `${l.compte} / ${l.tiers}` : l.compte, montant: m,
+          ...base,
+          type: "paiement" as const,
+          entite: s ? (nomParSuffixe.get(s) ?? `suffixe ${s}`) : "?",
+          journalSource: "TIERS",
+          journalDestination: first.journal,
+          compteTiers: l.tiers ? `${l.compte} / ${l.tiers}` : l.compte,
+          montant: m,
         };
         const payBank = bank;
         if (!s || !src || !payBank) {
           if (payBank?.startsWith("513") || (s && payBank && src !== payBank)) {
-            push({ ...common, banqueSource: src ?? "?", banqueDestination: payBank ?? banks.join("/") }, "",
-              !s ? (cands.length ? "Plusieurs clients possibles pour ce paiement" : "Écriture TIERS 467/401 correspondante introuvable")
-                : !payBank ? "Plusieurs comptes bancaires sur la pièce" : `Compte 512${s} du client introuvable`);
+            push(
+              {
+                ...common,
+                banqueSource: src ?? "?",
+                banqueDestination: payBank ?? banks.join("/"),
+              },
+              "",
+              !s
+                ? cands.length
+                  ? "Plusieurs clients possibles pour ce paiement"
+                  : "Écriture TIERS 467/401 correspondante introuvable"
+                : !payBank
+                  ? "Plusieurs comptes bancaires sur la pièce"
+                  : `Compte 512${s} du client introuvable`,
+            );
           }
         } else if (payBank !== src) {
-          push({ ...common, banqueSource: src, banqueDestination: payBank },
-            `Paiement réglé par ${payBank} (${first.journal}) au lieu du compte client ${src}`);
+          push(
+            { ...common, banqueSource: src, banqueDestination: payBank },
+            `Paiement réglé par ${payBank} (${first.journal}) au lieu du compte client ${src}`,
+          );
         }
       }
 
@@ -222,15 +278,27 @@ export function detectTransfers(
       if (p3 === "411" && l.credit) {
         const m = r2(l.credit);
         const common = {
-          ...base, type: "honoraires" as const, entite: "MCI", journalSource: "VENTE",
-          journalDestination: first.journal, compteTiers: l.compte, montant: m,
+          ...base,
+          type: "honoraires" as const,
+          entite: "MCI",
+          journalSource: "VENTE",
+          journalDestination: first.journal,
+          compteTiers: l.compte,
+          montant: m,
         };
         if (!bank || !mciBank) {
-          push({ ...common, banqueSource: bank ?? banks.join("/"), banqueDestination: mciBank ?? "?" }, "",
-            !bank ? "Plusieurs comptes bancaires sur la pièce" : "Compte bancaire MCI non identifié");
+          push(
+            { ...common, banqueSource: bank ?? banks.join("/"), banqueDestination: mciBank ?? "?" },
+            "",
+            !bank
+              ? "Plusieurs comptes bancaires sur la pièce"
+              : "Compte bancaire MCI non identifié",
+          );
         } else if (bank !== mciBank) {
-          push({ ...common, banqueSource: bank, banqueDestination: mciBank },
-            `Honoraire encaissé sur ${bank} (${first.journal}) au lieu du compte MCI ${mciBank}`);
+          push(
+            { ...common, banqueSource: bank, banqueDestination: mciBank },
+            `Honoraire encaissé sur ${bank} (${first.journal}) au lieu du compte MCI ${mciBank}`,
+          );
         }
       }
     }

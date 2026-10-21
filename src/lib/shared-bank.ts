@@ -7,7 +7,7 @@
  */
 export const SHARED_BANK = new Map<string, string>([
   ["PAMF", "190"], // EASY TECH
-  ["EVIOSYS", "600"], // ex-SONOCO, compte 512600
+  ["EVIOSYS", "600"], // ex-SONOCO, compte 512600 (BOA EVIOSYS, alimenté par le journal Orange Money)
   ["INGEDATA", "600"],
   ["CAMUSAT", "600"],
   ["STELLARIX", "210"], // AITS
@@ -22,15 +22,21 @@ export const SHARED_BANK = new Map<string, string>([
   ["FOUNDEVER", "700"], // SMARTONE
   ["KIDS AKADEMY", "800"], // NACRE
   ["NACRE DIR", "800"],
+  ["RAHARIVOLA BRUNO", "800"], // payé par BNINAC (512800)
   ["TANJAKA FOOD", "350"], // OMNIVEST
   ["SANLAMALLIANZ AUTOFI", "501"], // compte propre 512501 (BNIALL) depuis 2026
-  ["SANLAMALLIANZ COMPAGNIE", "100"], // 512100 SANLAM
+  ["SANLAMALLIANZ COMPAGNIE", "100"], // 512100 SANLAM + 513110 M-Vola
   ["JBU", "320"], // compte 512320 de BOOST (BNIJB)
   ["JBS", "320"],
   ["BOOST", "320"],
   ["TAMBOHO", "201"], // compte 512201 de TALYS (BOAGTA)
+  ["TAMBOHO HOSP", "201"],
   ["STMB", "201"],
+  ["STMB HOSP", "201"],
+  ["SANIFER = TALYS HOSP", "201"],
+  ["SANIFER = TALYS COVID", "201"],
   ["SOCOTA/LECO", "330"], // compte 512330 de LECOFRUIT (BNILEC)
   ["EVASAN", "140"], // compte 512140 (BOATSA)
   ["DHL EXPRESS", "120"], // compte 512120
+  ["MGS", "124"], // compte 512124 (BNI MGS/FSS)
 ]);

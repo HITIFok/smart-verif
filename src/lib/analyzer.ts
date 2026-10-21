@@ -1,20 +1,34 @@
 import * as XLSX from "xlsx";
-import type {
-  AnalysisResult,
-  Anomaly,
-  EntitySummary,
-  EntryLine,
-} from "./analysis-types";
+import type { AnalysisResult, Anomaly, EntitySummary, EntryLine } from "./analysis-types";
 import { detectTransfers } from "./transfers";
 import { SHARED_BANK } from "./shared-bank";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
+const TRANSFER = "580001";
 
 export interface VerifEntity {
   nom: string;
+  /** Suffixe principal : le plus fréquent parmi les comptes 46x du bloc. */
   suffixe: string;
+  /** Tous les suffixes des comptes 46x listés dans le bloc. Certains blocs en
+   *  regroupent plusieurs (ex. SANLAMALLIANZ COMPAGNIE = 103 + 100 + 501,
+   *  ORANGE MADAGASCAR = 500 + la banque 512004). */
+  suffixesAf: string[];
+  /** Tous les comptes listés dans le bloc (46x + 512/513). */
   comptes: string[];
+}
+
+export interface BalanceRow {
+  compte: string;
+  nom: string;
+  solde: number;
+}
+
+export interface VerifWorkbook {
+  entites: VerifEntity[];
+  /** Soldes de la feuille « Balance des comptes » du même classeur, si présente. */
+  balance: BalanceRow[] | null;
 }
 
 const num = (v: unknown): number => {
@@ -37,8 +51,8 @@ const family = (compte: string): "AF" | "TR" | null => {
   return null;
 };
 
-/** Reads the "Vérification" workbook and extracts the entity -> accounts mapping. */
-export function parseVerif(buffer: ArrayBuffer): VerifEntity[] {
+/** Reads the "Vérification" workbook: entity blocks from the yearly sheet + balance sheet. */
+export function parseVerif(buffer: ArrayBuffer): VerifWorkbook {
   const wb = XLSX.read(buffer, { type: "array" });
   const sheetName = wb.SheetNames.find((n) => /^\d{4}$/.test(n.trim())) ?? wb.SheetNames[0] ?? "";
   const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetName]!, {
@@ -56,7 +70,7 @@ export function parseVerif(buffer: ArrayBuffer): VerifEntity[] {
     // A row that also carries an account code (e.g. stray "AOUT" on the 467130
     // line of PAMF) is an account row with a stray label, NOT a new entity.
     if (c0 && !isAccount(c0) && !(isAccount(c1) && family(c1))) {
-      current = { nom: c0, suffixe: "", comptes: [] };
+      current = { nom: c0, suffixe: "", suffixesAf: [], comptes: [] };
       entities.push(current);
       continue;
     }
@@ -66,15 +80,53 @@ export function parseVerif(buffer: ArrayBuffer): VerifEntity[] {
   }
 
   for (const e of entities) {
+    const af = e.comptes.filter((c) => family(c) === "AF");
+    e.suffixesAf = [...new Set(af.map((c) => c.slice(3)))];
     const counts = new Map<string, number>();
-    for (const c of e.comptes) {
-      const s = c.slice(3);
-      counts.set(s, (counts.get(s) ?? 0) + 1);
+    for (const c of af.length ? af : e.comptes) {
+      counts.set(c.slice(3), (counts.get(c.slice(3)) ?? 0) + 1);
     }
     e.suffixe = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   }
 
-  return entities.filter((e) => e.suffixe);
+  // Dédoublonne les blocs qui reprennent le même périmètre (ex. FSS / DHL PRONET
+  // partagent le suffixe 124) : le second bloc n'apporte que des comptes
+  // supplémentaires éventuels (513124) et est fusionné dans le premier.
+  const deduped: VerifEntity[] = [];
+  const byKey = new Map<string, VerifEntity>();
+  for (const e of entities) {
+    if (!e.suffixe) continue;
+    const prev = byKey.get(e.suffixe);
+    if (prev) {
+      for (const c of e.comptes) if (!prev.comptes.includes(c)) prev.comptes.push(c);
+      continue;
+    }
+    byKey.set(e.suffixe, e);
+    deduped.push(e);
+  }
+
+  return { entites: deduped, balance: parseBalance(wb) };
+}
+
+/** Reads the "Balance des comptes" sheet (same workbook) if present. */
+export function parseBalance(wb: XLSX.WorkBook): BalanceRow[] | null {
+  const sheet = wb.Sheets["Balance des comptes"];
+  if (!sheet) return null;
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true });
+  const out: BalanceRow[] = [];
+  for (const row of rows) {
+    const code = str(row?.[0]).replace(/\.0$/, "");
+    if (!isAccount(code)) continue;
+    const p = code.slice(0, 3);
+    if (!AF.includes(p) && !TR.includes(p)) continue;
+    // Colonnes Sage : 14 = solde débit, 17 = solde crédit.
+    out.push({
+      compte: code,
+      nom: str(row?.[2]),
+      solde: num(row?.[14]) - num(row?.[17]),
+    });
+  }
+  return out.length ? out : null;
 }
 
 /** Reads the "Brouillard" workbook into normalized entry lines. */
@@ -93,16 +145,12 @@ export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
 
   return rows
     .map((r): EntryLine => {
-      const d = pick(r, "date écheance") ? null : null;
-      void d;
       const rawDate = pick(r, "date");
       return {
         journal: str(pick(r, "code journal", "journal")),
         piece: str(pick(r, "pièce", "piece")).replace(/\.0$/, ""),
         date:
-          rawDate instanceof Date
-            ? rawDate.toISOString().slice(0, 10)
-            : str(rawDate).slice(0, 10),
+          rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : str(rawDate).slice(0, 10),
         compte: str(pick(r, "compte général", "compte general")).replace(/\.0$/, ""),
         tiers: str(pick(r, "compte tiers")),
         libelle: str(pick(r, "libellé", "libelle")),
@@ -115,10 +163,11 @@ export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResult {
-  const bySuffix = new Map<string, VerifEntity>();
-  for (const e of verif) if (!bySuffix.has(e.suffixe)) bySuffix.set(e.suffixe, e);
-
+export function analyse(
+  lignes: EntryLine[],
+  verif: VerifEntity[],
+  balance?: BalanceRow[] | null,
+): AnalysisResult {
   // Account balances
   const soldes = new Map<string, number>();
   for (const l of lignes) {
@@ -126,24 +175,79 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
     if (!f) continue;
     soldes.set(l.compte, (soldes.get(l.compte) ?? 0) + l.debit - l.credit);
   }
+  const soldeOf = (c: string) => round2(soldes.get(c) ?? 0);
 
-  // Seuls les comptes 467/460/461/462 sont à solder avec le 512. Chaque
-  // entité a ses propres comptes 46x mais peut partager le 512 d'une autre
-  // (ex. AXIANSS/GES/WELIGHT/MADAGASCO/ATSS/VIA ASSURANCE -> 512220).
   const bankAccounts = new Set(
     [...soldes.keys()].filter((c) => c.startsWith("512") || c.startsWith("513")),
   );
-  const bankSuffixOf = (e: VerifEntity): string => {
-    if (bankAccounts.has(`512${e.suffixe}`)) return e.suffixe;
-    return SHARED_BANK.get(e.nom) ?? e.suffixe;
-  };
-  // Suffixes 46x légitimes pour chaque compte 512 (propriétaire + partageants)
+
+  // Périmètre de chaque entité : les comptes 46x de ses suffixes de bloc, plus
+  // les banques listées dans son bloc ou de même suffixe.
+  interface Scope {
+    e: VerifEntity;
+    af: string[];
+    trListed: string[];
+    trBySuffix: string[];
+    trCandidates: string[];
+  }
+  const scopes: Scope[] = verif.map((e) => {
+    const af = [...soldes.keys()].filter(
+      (c) => family(c) === "AF" && e.suffixesAf.includes(c.slice(3)),
+    );
+    const trListed = e.comptes.filter((c) => family(c) === "TR" && bankAccounts.has(c));
+    const trBySuffix = [...bankAccounts].filter(
+      (c) => !trListed.includes(c) && e.suffixesAf.includes(c.slice(3)),
+    );
+    return { e, af, trListed, trBySuffix, trCandidates: [...trListed, ...trBySuffix] };
+  });
+
+  // Suffixe -> nom d'entité (première entité gagne), pour les messages.
+  const suffixToNom = new Map<string, string>();
+  for (const s of scopes) {
+    for (const suf of [s.e.suffixe, ...s.e.suffixesAf, ...s.e.comptes.map((c) => c.slice(3))]) {
+      if (!suffixToNom.has(suf)) suffixToNom.set(suf, s.e.nom);
+    }
+  }
+  const nomDe = (suf: string) => suffixToNom.get(suf) ?? `suffixe ${suf}`;
+
+  // Propriétaire unique de chaque banque : 1re entité qui la liste dans son
+  // bloc, sinon 1re entité dont un suffixe 46x correspond au suffixe de la
+  // banque, sinon l'entité pointée par SHARED_BANK. La banque compte dans
+  // l'écart de son propriétaire UNIQUEMENT (pas de double comptage quand
+  // plusieurs entités partagent le même 512, ex. 512600).
+  const ownerOf = new Map<string, VerifEntity>();
+  for (const b of bankAccounts) {
+    const owner =
+      scopes.find((s) => s.trListed.includes(b)) ??
+      scopes.find((s) => s.e.suffixesAf.includes(b.slice(3))) ??
+      scopes.find((s) => SHARED_BANK.get(s.e.nom) === b.slice(3));
+    if (owner) ownerOf.set(b, owner.e);
+  }
+
+  // Suffixes 46x légitimes en contrepartie de chaque compte 512 (propriétaire
+  // + entités partageantes, listées ou via SHARED_BANK).
   const validAfByBank = new Map<string, Set<string>>();
-  for (const e of verif) {
-    const b = bankSuffixOf(e);
-    const set = validAfByBank.get(b) ?? new Set<string>();
-    set.add(e.suffixe);
-    validAfByBank.set(b, set);
+  const addBankUser = (bank: string, e: VerifEntity) => {
+    const set = validAfByBank.get(bank) ?? new Set<string>();
+    for (const suf of e.suffixesAf) set.add(suf);
+    validAfByBank.set(bank, set);
+  };
+  const bankOfShared = (nom: string): string | null => {
+    const suf = SHARED_BANK.get(nom);
+    if (!suf) return null;
+    return bankAccounts.has(`512${suf}`)
+      ? `512${suf}`
+      : bankAccounts.has(`513${suf}`)
+        ? `513${suf}`
+        : null;
+  };
+  for (const s of scopes) {
+    for (const b of s.trCandidates) addBankUser(b, s.e);
+    const shared = bankOfShared(s.e.nom);
+    if (shared && !s.trCandidates.includes(shared)) addBankUser(shared, s.e);
+  }
+  for (const b of bankAccounts) {
+    if (!validAfByBank.has(b)) validAfByBank.set(b, new Set([b.slice(3)]));
   }
 
   // Group lines by piece
@@ -168,35 +272,36 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
     const date = parts[2] ?? "";
     const first = group[0];
     if (!first) continue;
+    // Virements internes entre comptes de trésorerie (580001) : jamais une
+    // anomalie client. Le journal RAN (à-nouveaux d'ouverture) n'est pas
+    // actionnable non plus : il ne se corrige pas et ne casse pas le rapprochement.
+    if (group.some((l) => l.compte === TRANSFER)) continue;
+    if (journal === "RAN") continue;
+
     const tr = group.filter((l) => family(l.compte) === "TR");
     if (tr.length === 0) continue;
-
     const af = group.filter((l) => family(l.compte) === "AF");
-    const trSuffixes = [...new Set(tr.map((l) => l.compte.slice(3)))];
+    const trComptes = [...new Set(tr.map((l) => l.compte))];
 
-    for (const s of trSuffixes) {
-      const ent = bySuffix.get(s);
+    for (const c of trComptes) {
+      const ent = ownerOf.get(c);
       if (!ent) continue;
-      const trLines = tr.filter((l) => l.compte.slice(3) === s);
+      const trLines = tr.filter((l) => l.compte === c);
       const montantTr = round2(trLines.reduce((t, l) => t + l.debit - l.credit, 0));
       if (montantTr === 0 && af.length > 0) continue;
 
-      const valid = validAfByBank.get(s) ?? new Set([s]);
+      const valid = validAfByBank.get(c) ?? new Set([c.slice(3)]);
       const afSameClient = af.filter((l) => valid.has(l.compte.slice(3)));
       const afOther = af.filter((l) => !valid.has(l.compte.slice(3)));
-      const trOther = tr.filter((l) => l.compte.slice(3) !== s);
+      const trOther = tr.filter((l) => l.compte !== c);
 
       if (afOther.length > 0 || trOther.length > 0) {
         const autres = [...new Set([...afOther, ...trOther].map((l) => l.compte))];
-        const autresNoms = [
-          ...new Set(
-            autres.map((c) => bySuffix.get(c.slice(3))?.nom ?? `suffixe ${c.slice(3)}`),
-          ),
-        ];
+        const autresNoms = [...new Set(autres.map((l) => nomDe(l.slice(3))))];
         addAnomaly({
           type: "mauvais_client",
           entite: ent.nom,
-          suffixe: s,
+          suffixe: ent.suffixe,
           journal,
           piece,
           date,
@@ -217,7 +322,7 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
         addAnomaly({
           type: "hors_perimetre",
           entite: ent.nom,
-          suffixe: s,
+          suffixe: ent.suffixe,
           journal,
           piece,
           date,
@@ -232,14 +337,12 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
         continue;
       }
 
-      const net = round2(
-        [...trLines, ...afSameClient].reduce((t, l) => t + l.debit - l.credit, 0),
-      );
+      const net = round2([...trLines, ...afSameClient].reduce((t, l) => t + l.debit - l.credit, 0));
       if (net !== 0) {
         addAnomaly({
           type: "hors_perimetre",
           entite: ent.nom,
-          suffixe: s,
+          suffixe: ent.suffixe,
           journal,
           piece,
           date,
@@ -253,37 +356,47 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
     }
   }
 
-  // Entity summaries + forgotten accounts
+  // Entity summaries + forgotten / orphan accounts
   const entites: EntitySummary[] = [];
-  for (const e of verif) {
-    const comptes = [...soldes.entries()]
-      .filter(([c]) => c.slice(3) === e.suffixe && family(c))
-      .map(([compte, solde]) => ({
-        compte,
-        solde: round2(solde),
-        listeVerif: e.comptes.includes(compte),
-        famille: family(compte) as "AF" | "TR",
-      }))
-      .sort((a, b) => a.compte.localeCompare(b.compte));
+  const suffixesConnus = new Set<string>();
+  for (const s of scopes) for (const suf of s.e.suffixesAf) suffixesConnus.add(suf);
 
-    // Entité sans 512 propre : son appel de fonds se solde avec le 512 partagé
-    const bs = bankSuffixOf(e);
-    if (bs !== e.suffixe) {
-      const shared = `512${bs}`;
-      const solde = soldes.get(shared);
-      if (solde !== undefined && !comptes.some((c) => c.compte === shared)) {
-        comptes.push({
-          compte: shared,
-          solde: round2(solde),
-          listeVerif: true,
-          famille: "TR",
-        });
-        comptes.sort((a, b) => a.compte.localeCompare(b.compte));
-      }
+  for (const s of scopes) {
+    const e = s.e;
+    const comptes: EntitySummary["comptes"] = [];
+    for (const c of s.af) {
+      comptes.push({
+        compte: c,
+        solde: soldeOf(c),
+        listeVerif: e.comptes.includes(c),
+        famille: "AF",
+      });
     }
+    for (const b of s.trCandidates) {
+      const isOwner = ownerOf.get(b) === e;
+      comptes.push({
+        compte: b,
+        solde: soldeOf(b),
+        listeVerif: e.comptes.includes(b) || isOwner,
+        famille: "TR",
+        ...(isOwner ? {} : { partage: true }),
+      });
+    }
+    // Banque partagée via SHARED_BANK : affichée à titre informatif.
+    const sharedBank = bankOfShared(e.nom);
+    if (sharedBank && !comptes.some((c) => c.compte === sharedBank)) {
+      comptes.push({
+        compte: sharedBank,
+        solde: soldeOf(sharedBank),
+        listeVerif: false,
+        famille: "TR",
+        partage: true,
+      });
+    }
+    comptes.sort((a, b) => a.compte.localeCompare(b.compte));
 
     for (const c of comptes) {
-      if (!c.listeVerif && c.solde !== 0) {
+      if (!c.listeVerif && !c.partage && c.solde !== 0) {
         addAnomaly({
           type: "compte_oublie",
           entite: e.nom,
@@ -300,11 +413,9 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
       }
     }
 
-    const appelDeFonds = round2(
-      comptes.filter((c) => c.famille === "AF").reduce((t, c) => t + c.solde, 0),
-    );
+    const appelDeFonds = round2(s.af.reduce((t, c) => t + soldeOf(c), 0));
     const tresorerie = round2(
-      comptes.filter((c) => c.famille === "TR").reduce((t, c) => t + c.solde, 0),
+      s.trCandidates.filter((b) => ownerOf.get(b) === e).reduce((t, b) => t + soldeOf(b), 0),
     );
     const own = anomalies.filter((a) => a.suffixe === e.suffixe);
 
@@ -320,13 +431,65 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
     });
   }
 
+  // Comptes 46x orphelins : aucun bloc ne contrôle leur suffixe.
+  for (const c of [...soldes.keys()].sort()) {
+    if (family(c) !== "AF" || suffixesConnus.has(c.slice(3))) continue;
+    const solde = soldeOf(c);
+    if (solde === 0) continue;
+    addAnomaly({
+      type: "compte_oublie",
+      entite: "(hors vérification)",
+      suffixe: "",
+      journal: "",
+      piece: "",
+      date: "",
+      libelle: `Compte ${c} absent de la feuille de vérification`,
+      comptes: c,
+      montant: solde,
+      detail: `Le compte ${c} a un solde de ${solde.toLocaleString("fr-FR")} mais son suffixe ne figure dans le contrôle d'aucun client`,
+      lignes: [],
+    });
+  }
+
+  // Écart brouillard / balance des comptes : met en évidence les écritures
+  // présentes dans la balance mais absentes du brouillard (ou inversément),
+  // qui empêchent définitivement le soldage.
+  if (balance?.length) {
+    const bal = new Map(balance.map((b) => [b.compte, b]));
+    const entityOf = (c: string): VerifEntity | null => {
+      const listed = scopes.find((s) => s.e.comptes.includes(c));
+      if (listed) return listed.e;
+      if (family(c) === "AF") {
+        return scopes.find((st) => st.e.suffixesAf.includes(c.slice(3)))?.e ?? null;
+      }
+      return ownerOf.get(c) ?? null;
+    };
+    for (const c of [...new Set([...soldes.keys(), ...bal.keys()])].sort()) {
+      const sb = soldeOf(c);
+      const sl = round2(bal.get(c)?.solde ?? 0);
+      const diff = round2(sb - sl);
+      if (Math.abs(diff) < 0.01) continue;
+      const ent = entityOf(c);
+      addAnomaly({
+        type: "ecart_balance",
+        entite: ent?.nom ?? "(hors vérification)",
+        suffixe: ent?.suffixe ?? "",
+        journal: "",
+        piece: "",
+        date: "",
+        libelle: `Compte ${c}${bal.get(c)?.nom ? ` — ${bal.get(c)!.nom}` : ""}`,
+        comptes: c,
+        montant: diff,
+        detail: `Solde brouillard ${sb.toLocaleString("fr-FR")} ≠ solde balance des comptes ${sl.toLocaleString("fr-FR")} : écriture(s) manquante(s) dans le brouillard ou passée(s) après son export`,
+        lignes: [],
+      });
+    }
+  }
+
   entites.sort((a, b) => Math.abs(b.ecart) - Math.abs(a.ecart));
   anomalies.sort((a, b) => Math.abs(b.montant) - Math.abs(a.montant));
 
-  const transferts = detectTransfers(
-    lignes,
-    new Map(verif.map((e) => [e.suffixe, e.nom])),
-  );
+  const transferts = detectTransfers(lignes, suffixToNom);
 
   return {
     entites,
@@ -342,6 +505,7 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
         mauvais_client: anomalies.filter((a) => a.type === "mauvais_client").length,
         hors_perimetre: anomalies.filter((a) => a.type === "hors_perimetre").length,
         compte_oublie: anomalies.filter((a) => a.type === "compte_oublie").length,
+        ecart_balance: anomalies.filter((a) => a.type === "ecart_balance").length,
       },
     },
   };

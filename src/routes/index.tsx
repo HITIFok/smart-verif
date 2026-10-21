@@ -41,6 +41,7 @@ const TYPE_LABEL: Record<AnomalyType, string> = {
   mauvais_client: "Mauvais client",
   hors_perimetre: "Hors périmètre",
   compte_oublie: "Compte oublié",
+  ecart_balance: "Écart brouillard / balance",
 };
 
 const fmt = (n: number) =>
@@ -112,9 +113,7 @@ function Index() {
         <p className="num text-xs uppercase tracking-[0.25em] text-muted-foreground">
           Contrôle comptable · Appel de fonds / Trésorerie
         </p>
-        <h1 className="mt-2 text-4xl font-bold sm:text-5xl">
-          Détecteur d'écritures non soldées
-        </h1>
+        <h1 className="mt-2 text-4xl font-bold sm:text-5xl">Détecteur d'écritures non soldées</h1>
         <p className="mt-3 max-w-2xl text-muted-foreground">
           Déposez le brouillard et la feuille de vérification : l'application recalcule chaque
           contrôle client et isole les écritures qui empêchent le solde d'être à zéro.
@@ -130,7 +129,7 @@ function Index() {
         />
         <FileDrop
           label="Feuille de vérification"
-          hint="Verif_BG….xlsx — comptes contrôlés par client"
+          hint="Verif_BG….xlsx — blocs clients + balance des comptes"
           file={verif}
           onFile={setVerif}
         />
@@ -181,7 +180,7 @@ function Index() {
               icon={<AlertTriangle className="size-4" />}
               label="Écritures suspectes"
               value={result.anomalies.length.toLocaleString("fr-FR")}
-              sub={`${result.stats.parType.mauvais_client} mauvais client · ${result.stats.parType.hors_perimetre} hors périmètre · ${result.stats.parType.compte_oublie} comptes oubliés`}
+              sub={`${result.stats.parType.mauvais_client} mauvais client · ${result.stats.parType.hors_perimetre} hors périmètre · ${result.stats.parType.compte_oublie} comptes oubliés · ${result.stats.parType.ecart_balance} écarts balance`}
               tone="warning"
             />
             <Stat
@@ -260,6 +259,11 @@ function Index() {
                                     hors contrôle
                                   </span>
                                 )}
+                                {c.partage && (
+                                  <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                                    partagé
+                                  </span>
+                                )}
                               </span>
                               <span className="num">{fmt(c.solde)}</span>
                             </div>
@@ -332,7 +336,9 @@ function Index() {
                           ? "bg-destructive/12 text-destructive"
                           : a.type === "hors_perimetre"
                             ? "bg-warning/20 text-accent-foreground"
-                            : "bg-primary/10 text-primary"
+                            : a.type === "ecart_balance"
+                              ? "bg-warning/15 text-destructive"
+                              : "bg-primary/10 text-primary"
                       }`}
                     >
                       {TYPE_LABEL[a.type]}
@@ -446,17 +452,40 @@ function Transferts({ result }: { result: AnalysisResult }) {
   const list = result.transferts.filter(
     (t) => (statut === "tous" || t.statut === statut) && (type === "tous" || t.type === type),
   );
-  const sel = "rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent";
+  const sel =
+    "rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent";
   return (
     <section className="mt-6">
       <div className="mb-4 flex flex-wrap gap-3">
-        <select value={statut} onChange={(e) => { setStatut(e.target.value as never); setLimit(100); }} className={sel}>
+        <select
+          value={statut}
+          onChange={(e) => {
+            setStatut(e.target.value as never);
+            setLimit(100);
+          }}
+          className={sel}
+        >
           <option value="tous">Tous les statuts</option>
-          {Object.entries(ST_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          {Object.entries(ST_LABEL).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
         </select>
-        <select value={type} onChange={(e) => { setType(e.target.value as never); setLimit(100); }} className={sel}>
+        <select
+          value={type}
+          onChange={(e) => {
+            setType(e.target.value as never);
+            setLimit(100);
+          }}
+          className={sel}
+        >
           <option value="tous">Toutes les opérations</option>
-          {Object.entries(OP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          {Object.entries(OP_LABEL).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
         </select>
       </div>
       <p className="mb-3 text-sm text-muted-foreground">
@@ -477,28 +506,37 @@ function Transferts({ result }: { result: AnalysisResult }) {
               {t.envoyeur.length > 0 && (
                 <div className="num mt-2 grid gap-1 text-xs sm:grid-cols-2">
                   <div className="rounded bg-secondary/60 px-2 py-1">
-                    Envoyeur ({t.journalSource}) : {t.envoyeur.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
+                    Envoyeur ({t.journalSource}) :{" "}
+                    {t.envoyeur.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
                   </div>
                   <div className="rounded bg-secondary/60 px-2 py-1">
-                    Réceptionnaire ({t.journalDestination}) : {t.receptionnaire.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
+                    Réceptionnaire ({t.journalDestination}) :{" "}
+                    {t.receptionnaire.map((l) => `${l.compte} ${l.sens}`).join(" / ")}
                   </div>
                 </div>
               )}
             </div>
             <div className="text-right">
               <p className="num text-sm font-semibold">{fmt(t.montant)}</p>
-              <p className={`mt-1 text-[11px] font-semibold uppercase ${t.statut === "a_creer" ? "text-destructive" : t.statut === "manuel" ? "text-accent-foreground" : "text-success"}`}>
+              <p
+                className={`mt-1 text-[11px] font-semibold uppercase ${t.statut === "a_creer" ? "text-destructive" : t.statut === "manuel" ? "text-accent-foreground" : "text-success"}`}
+              >
                 {ST_LABEL[t.statut]}
               </p>
             </div>
           </div>
         ))}
         {list.length === 0 && (
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">Aucune écriture pour ces filtres.</p>
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            Aucune écriture pour ces filtres.
+          </p>
         )}
       </div>
       {list.length > limit && (
-        <button onClick={() => setLimit((l) => l + 200)} className="mt-4 w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent">
+        <button
+          onClick={() => setLimit((l) => l + 200)}
+          className="mt-4 w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+        >
           Afficher plus ({list.length - limit} restantes)
         </button>
       )}
