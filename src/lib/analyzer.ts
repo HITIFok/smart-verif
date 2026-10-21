@@ -6,6 +6,7 @@ import type {
   EntryLine,
 } from "./analysis-types";
 import { detectTransfers } from "./transfers";
+import { SHARED_BANK } from "./shared-bank";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
@@ -124,6 +125,25 @@ export function analyse(lignes: EntryLine[], verif: VerifEntity[]): AnalysisResu
     const f = family(l.compte);
     if (!f) continue;
     soldes.set(l.compte, (soldes.get(l.compte) ?? 0) + l.debit - l.credit);
+  }
+
+  // Seuls les comptes 467/460/461/462 sont à solder avec le 512. Chaque
+  // entité a ses propres comptes 46x mais peut partager le 512 d'une autre
+  // (ex. AXIANSS/GES/WELIGHT/MADAGASCO/ATSS/VIA ASSURANCE -> 512220).
+  const bankAccounts = new Set(
+    [...soldes.keys()].filter((c) => c.startsWith("512") || c.startsWith("513")),
+  );
+  const bankSuffixOf = (e: VerifEntity): string => {
+    if (bankAccounts.has(`512${e.suffixe}`)) return e.suffixe;
+    return SHARED_BANK.get(e.nom) ?? e.suffixe;
+  };
+  // Suffixes 46x légitimes pour chaque compte 512 (propriétaire + partageants)
+  const validAfByBank = new Map<string, Set<string>>();
+  for (const e of verif) {
+    const b = bankSuffixOf(e);
+    const set = validAfByBank.get(b) ?? new Set<string>();
+    set.add(e.suffixe);
+    validAfByBank.set(b, set);
   }
 
   // Group lines by piece
