@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import type { AnalysisResult } from "./analysis-types";
+import { PIECE_ROLE_LABELS } from "./analysis-types";
 import { OPERATION_LABELS } from "./transfers";
 import { SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT } from "./schema-ecritures";
 import { BANQUES_SOCIETES } from "./banques-societes";
@@ -36,6 +37,33 @@ export function exportAnomalies(result: AnalysisResult) {
     Statut: f.soldee ? "Soldée" : "Écart à corriger",
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(familles), "Vérification familles");
+
+  // Écarts de famille réels : les pièces qui composent chaque écart — les
+  // écritures qu'il faut corriger dans Sage pour solder la famille.
+  const piecesFamilles = result.familles
+    .filter((f) => !f.soldee)
+    .flatMap((f) =>
+      f.pieces.map((p) => ({
+        Famille: f.nom,
+        Membres: f.membres.join(" + "),
+        "Écart famille": f.ecart,
+        Journal: p.journal,
+        "N° pièce": p.piece,
+        Date: p.date,
+        Libellé: p.libelle,
+        Rôle: PIECE_ROLE_LABELS[p.role],
+        "Comptes périmètre": p.comptes,
+        "Tous comptes": p.comptesTous,
+        "Mouvement net": p.net,
+        Anomalie: p.anomalie ? "Oui" : "",
+        "Aussi dans": p.aussiDans?.join(", ") ?? "",
+      })),
+    );
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.json_to_sheet(piecesFamilles),
+    "Pièces écarts familles",
+  );
 
   const anomalies = result.anomalies.map((a) => ({
     Type: LABELS[a.type] ?? a.type,

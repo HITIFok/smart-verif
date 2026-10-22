@@ -5,6 +5,8 @@ import type {
   EntitySummary,
   EntryLine,
   FamilleVerif,
+  PieceEcart,
+  PieceEcartRole,
 } from "./analysis-types";
 import { detectTransfers } from "./transfers";
 import { BANQUE_PROPRIETAIRE, SHARED_BANK } from "./shared-bank";
@@ -556,6 +558,7 @@ export function analyse(
       tresorerie: treso,
       ecart: ecartFamille,
       soldee: Math.abs(ecartFamille) < 0.01,
+      pieces: [],
     });
     parent.enfants = membres.map((m) => m.nom);
     for (const enfant of enfants) {
@@ -563,6 +566,96 @@ export function analyse(
     }
   }
   familles.sort((a, b) => Math.abs(b.ecart) - Math.abs(a.ecart));
+
+  // Écarts de famille réels (familles non soldées) : les pièces du brouillard
+  // qui les composent. C'est la vérification demandée par le comptable — la
+  // somme des mouvements nets de ces pièces sur le périmètre de la famille
+  // redonne exactement l'écart de la feuille de vérification, et ce sont ces
+  // écritures qu'il faut corriger dans Sage pour solder la famille.
+  const famillesReelles = familles.filter((f) => !f.soldee);
+  if (famillesReelles.length) {
+    const cleAnomalies = new Set(
+      anomalies.filter((a) => a.journal || a.piece).map((a) => `${a.journal}|${a.piece}|${a.date}`),
+    );
+    const scopesFamilles = famillesReelles.map((f) => ({
+      f,
+      scope: new Set(
+        f.membres.flatMap((m) => {
+          const e = byNomEntite.get(m);
+          if (!e) return [];
+          return e.comptes
+            .filter((c) => c.famille === "AF" || (c.famille === "TR" && !c.partage))
+            .map((c) => c.compte);
+        }),
+      ),
+      acc: new Map<
+        string,
+        { net: number; libelle: string; comptes: Set<string>; tous: Set<string> }
+      >(),
+    }));
+
+    const roleDe = (journal: string, group: EntryLine[]): PieceEcartRole => {
+      if (journal === "RAN") return "a_nouveaux";
+      if (group.some((l) => l.compte === TRANSFER)) return "compte_a_compte";
+      return matchPieceSchema(group) ?? "autre";
+    };
+
+    for (const [key, group] of pieces) {
+      for (const sf of scopesFamilles) {
+        let net = 0;
+        const comptes = new Set<string>();
+        for (const l of group) {
+          if (!sf.scope.has(l.compte)) continue;
+          net += l.debit - l.credit;
+          comptes.add(l.compte);
+        }
+        const netR = round2(net);
+        if (netR === 0) continue;
+        sf.acc.set(key, {
+          net: netR,
+          libelle: group.find((l) => l.libelle)?.libelle ?? "",
+          comptes,
+          tous: new Set(group.map((l) => l.compte)),
+        });
+      }
+    }
+
+    // Assemblage + référencement croisé (une même pièce peut faire l'écart de
+    // deux familles : mauvais client entre familles réelles).
+    const famillesParPiece = new Map<string, string[]>();
+    for (const sf of scopesFamilles) {
+      for (const key of sf.acc.keys()) {
+        const arr = famillesParPiece.get(key);
+        if (arr) arr.push(sf.f.nom);
+        else famillesParPiece.set(key, [sf.f.nom]);
+      }
+    }
+    for (const sf of scopesFamilles) {
+      const list: PieceEcart[] = [];
+      for (const [key, v] of sf.acc) {
+        const parts = key.split("|");
+        const group = pieces.get(key)!;
+        list.push({
+          journal: parts[0] ?? "",
+          piece: parts[1] ?? "",
+          date: parts[2] ?? "",
+          libelle: v.libelle,
+          comptes: [...v.comptes].sort().join(", "),
+          comptesTous: [...v.tous].sort().join(", "),
+          net: v.net,
+          role: roleDe(parts[0] ?? "", group),
+          anomalie: cleAnomalies.has(key),
+          ...(famillesParPiece.get(key)!.length > 1
+            ? {
+                aussiDans: famillesParPiece.get(key)!.filter((n) => n !== sf.f.nom),
+              }
+            : {}),
+        });
+      }
+      list.sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+      sf.f.pieces = list;
+    }
+  }
 
   const transferts = detectTransfers(lignes, suffixToNom);
 
@@ -579,6 +672,7 @@ export function analyse(
       familles: familles.length,
       famillesSoldees: familles.filter((f) => f.soldee).length,
       ecartTotal: round2(entites.reduce((t, e) => t + Math.abs(e.ecart), 0)),
+      piecesAFixer: familles.filter((f) => !f.soldee).reduce((t, f) => t + f.pieces.length, 0),
       parType: {
         mauvais_client: anomalies.filter((a) => a.type === "mauvais_client").length,
         hors_perimetre: anomalies.filter((a) => a.type === "hors_perimetre").length,

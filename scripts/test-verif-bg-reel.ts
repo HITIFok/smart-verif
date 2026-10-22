@@ -163,3 +163,51 @@ console.log("\nTop 12 anomalies :");
 for (const a of result.anomalies.slice(0, 12)) {
   console.log(`  [${a.type}] ${a.entite} — ${a.libelle.slice(0, 50)} — ${a.montant.toFixed(2)} — ${a.detail.slice(0, 80)}`);
 }
+
+// ============================================================
+// Écarts de famille réels : pièces concernées (à corriger dans Sage)
+// ============================================================
+console.log("\n=== Pièces composant les écarts de famille réels ===");
+const reelles = result.familles.filter((f) => !f.soldee);
+const soldees = result.familles.filter((f) => f.soldee);
+let pOK = 0;
+let pKO = 0;
+for (const f of reelles) {
+  const somme = f.pieces.reduce((t, p) => t + p.net, 0);
+  const sommeOK = Math.abs(somme - f.ecart) < 0.02;
+  const tousNetNonNul = f.pieces.every((p) => Math.abs(p.net) >= 0.01);
+  const triees = f.pieces.every(
+    (p, i) => i === 0 || Math.abs(f.pieces[i - 1]!.net) >= Math.abs(p.net),
+  );
+  if (sommeOK && tousNetNonNul && triees) pOK++;
+  else pKO++;
+  const roles: Record<string, number> = {};
+  for (const p of f.pieces) roles[p.role] = (roles[p.role] ?? 0) + 1;
+  console.log(
+    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} | Σ=${somme.toFixed(2).padStart(13)} | ${sommeOK ? "Σ=écart ✓" : "Σ DIFF"}${tousNetNonNul ? "" : " | NET NUL !" }${triees ? "" : " | MAL TRIÉ"} | roles=${JSON.stringify(roles)}`,
+  );
+  for (const p of f.pieces.slice(0, 3)) {
+    console.log(
+      `    [${p.role}] ${p.date} ${p.journal.padEnd(6)} ${p.piece.padEnd(10)} net=${p.net.toFixed(2).padStart(14)}${p.anomalie ? " [anomalie]" : ""}${p.aussiDans ? ` [aussi ${p.aussiDans.join(",")}]` : ""} ${p.libelle.slice(0, 45)}`,
+    );
+  }
+}
+for (const f of soldees) {
+  if (f.pieces.length !== 0) {
+    pKO++;
+    console.log(`  ✗ ${f.nom} : famille soldée avec ${f.pieces.length} pièces (attendu 0)`);
+  }
+}
+console.log(`Familles vérifiées: ${pOK} OK, ${pKO} KO (${reelles.length} réelles + ${soldees.length} soldées à pièces vides)`);
+
+// Référencement croisé : une pièce partagée entre deux familles réelles
+const partagees = reelles.flatMap((f) => f.pieces.filter((p) => p.aussiDans).map((p) => ({ f: f.nom, p })));
+console.log(`Pièces partagées entre familles réelles : ${partagees.length}`);
+for (const { f, p } of partagees.slice(0, 5)) {
+  console.log(`  ${f} ↔ ${p.aussiDans!.join(", ")} : ${p.journal} ${p.piece} ${p.date} net=${p.net.toFixed(2)}`);
+}
+
+// Anomalies croisées avec les pièces d'écart
+const nbAnomalies = reelles.reduce((t, f) => t + f.pieces.filter((p) => p.anomalie).length, 0);
+console.log(`Pièces d'écart aussi signalées comme anomalies : ${nbAnomalies}`);
+console.log(`Stats.piecesAFixer = ${result.stats.piecesAFixer} (attendu ${reelles.reduce((t, f) => t + f.pieces.length, 0)})`);

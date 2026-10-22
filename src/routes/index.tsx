@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { FileDrop } from "@/components/FileDrop";
 import { exportAnomalies } from "@/lib/export-xlsx";
-import type { AnalysisResult, AnomalyType } from "@/lib/analysis-types";
+import type { AnalysisResult, AnomalyType, FamilleVerif } from "@/lib/analysis-types";
+import { PIECE_ROLE_LABELS } from "@/lib/analysis-types";
 import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
 import { CYCLE_CHAIN, SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT } from "@/lib/schema-ecritures";
@@ -188,7 +189,7 @@ function Index() {
             icon={<ShieldCheck className="size-4" />}
             label="Contrôles soldés"
             value={`${result.stats.soldees} / ${result.stats.entites}`}
-            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · écart < 0,01`}
+            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) à corriger dans Sage`}
             tone="success"
           />
           <Stat
@@ -383,6 +384,9 @@ function Index() {
         <Transferts result={result} />
       ) : (
         <section className="mt-6">
+          {result.familles.some((f) => !f.soldee) && (
+            <EcartsFamilles familles={result.familles.filter((f) => !f.soldee)} />
+          )}
           <div className="mb-4 flex flex-wrap gap-3">
             <input
               value={search}
@@ -979,5 +983,179 @@ function Transferts({ result }: { result: AnalysisResult }) {
         </button>
       )}
     </section>
+  );
+}
+
+/** Écarts de famille réels (familles non soldées) : les écritures qu'il faut
+ *  corriger dans Sage. Chaque famille liste les pièces du brouillard qui
+ *  composent son écart — la somme de leurs mouvements nets sur le périmètre
+ *  de la famille redonne exactement l'écart de la feuille de vérification. */
+function EcartsFamilles({ familles }: { familles: FamilleVerif[] }) {
+  const [ouverts, setOuverts] = useState<Set<string>>(
+    () => new Set(familles.slice(0, 1).map((f) => f.nom)),
+  );
+  const toggle = (nom: string) =>
+    setOuverts((prev) => {
+      const next = new Set(prev);
+      if (next.has(nom)) next.delete(nom);
+      else next.add(nom);
+      return next;
+    });
+  const totalPieces = familles.reduce((t, f) => t + f.pieces.length, 0);
+  return (
+    <div className="mb-6 space-y-2">
+      <div className="panel px-4 py-3">
+        <p className="text-sm font-semibold">
+          Écarts de famille réels — les écritures à corriger dans Sage
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Les écarts qui comptent sont ceux des familles non soldées : ce sont eux qu'il faut
+          corriger dans Sage. Pour chaque famille, l'application vérifie l'écart en listant les
+          pièces du brouillard qui le composent — le mouvement net de chaque pièce sur le périmètre
+          de la famille, et la somme de ces nets redonne exactement l'écart de la feuille de
+          vérification ({totalPieces.toLocaleString("fr-FR")} pièce(s) au total).
+        </p>
+      </div>
+      {familles.map((f) => (
+        <CarteFamilleEcart
+          key={f.nom}
+          f={f}
+          ouvert={ouverts.has(f.nom)}
+          onToggle={() => toggle(f.nom)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CarteFamilleEcart({
+  f,
+  ouvert,
+  onToggle,
+}: {
+  f: FamilleVerif;
+  ouvert: boolean;
+  onToggle: () => void;
+}) {
+  const [limit, setLimit] = useState(30);
+  const somme = f.pieces.reduce((t, p) => t + p.net, 0);
+  const verifiee = Math.abs(somme - f.ecart) < 0.02;
+  return (
+    <div className="panel overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="grid w-full grid-cols-2 items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60 md:grid-cols-[1.5fr_auto_auto_auto]"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <ChevronDown
+            className={`size-4 shrink-0 text-muted-foreground transition-transform ${ouvert ? "rotate-180" : ""}`}
+          />
+          <div className="min-w-0">
+            <p className="font-semibold">
+              {f.nom}
+              <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                famille
+              </span>
+            </p>
+            <p className="truncate text-xs text-muted-foreground">{f.membres.join(" + ")}</p>
+          </div>
+        </div>
+        <span className="num self-center text-right text-xs text-muted-foreground">
+          {f.pieces.length.toLocaleString("fr-FR")} pièce(s) concernée(s)
+        </span>
+        <span
+          className={`num self-center text-right font-bold ${f.ecart < 0 ? "text-destructive" : ""}`}
+        >
+          {fmt(f.ecart)}
+        </span>
+        <span
+          className={`self-center rounded px-2 py-1 text-center text-[11px] font-semibold uppercase ${
+            verifiee ? "bg-success/15 text-success" : "bg-warning/20 text-accent-foreground"
+          }`}
+        >
+          {verifiee ? "Σ vérifiée" : "Σ écart"}
+        </span>
+      </button>
+      {ouvert && (
+        <div className="border-t border-border bg-secondary/30">
+          <p className="px-4 pt-3 text-xs text-muted-foreground">
+            Pièces dont le mouvement net sur le périmètre de la famille ({f.membres.join(", ")})
+            n'est pas nul : ce sont ces écritures qu'il faut corriger dans Sage pour solder l'écart
+            de {fmt(f.ecart)}. Triées du plus gros contributeur au plus petit ; les journaux RAN
+            (à-nouveaux) portent le solde historique d'ouverture.
+          </p>
+          <div className="mt-2 divide-y divide-border">
+            {f.pieces.slice(0, limit).map((p, i) => (
+              <div
+                key={`${p.journal}|${p.piece}|${p.date}|${i}`}
+                className="grid gap-2 px-4 py-2.5 md:grid-cols-[auto_1fr_auto]"
+              >
+                <span
+                  className={`h-fit rounded px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                    p.role === "a_nouveaux"
+                      ? "bg-secondary text-muted-foreground"
+                      : p.role === "autre"
+                        ? "bg-warning/20 text-accent-foreground"
+                        : p.role === "compte_a_compte"
+                          ? "bg-primary/10 text-primary"
+                          : "bg-secondary text-secondary-foreground"
+                  }`}
+                >
+                  {PIECE_ROLE_LABELS[p.role]}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {p.journal || "—"}
+                    <span className="num ml-2 font-normal text-muted-foreground">
+                      pièce {p.piece || "—"} · {p.date}
+                    </span>
+                    {p.anomalie && (
+                      <span className="ml-2 rounded bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-destructive">
+                        anomalie
+                      </span>
+                    )}
+                    {p.aussiDans && (
+                      <span className="ml-2 rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-foreground">
+                        aussi {p.aussiDans.join(", ")}
+                      </span>
+                    )}
+                  </p>
+                  <p className="truncate text-sm text-muted-foreground" title={p.libelle}>
+                    {p.libelle}
+                  </p>
+                  <p
+                    className="num truncate text-xs text-muted-foreground"
+                    title={`${p.comptes}${p.comptesTous !== p.comptes ? ` — tous comptes : ${p.comptesTous}` : ""}`}
+                  >
+                    Périmètre : {p.comptes}
+                    {p.comptesTous !== p.comptes && (
+                      <span className="text-muted-foreground/70"> · tous : {p.comptesTous}</span>
+                    )}
+                  </p>
+                </div>
+                <span
+                  className={`num h-fit text-right text-sm font-semibold ${p.net < 0 ? "text-destructive" : ""}`}
+                >
+                  {fmt(p.net)}
+                </span>
+              </div>
+            ))}
+            {f.pieces.length === 0 && (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+                Aucune pièce individuelle ne compose cet écart.
+              </p>
+            )}
+          </div>
+          {f.pieces.length > limit && (
+            <button
+              onClick={() => setLimit((l) => l + 100)}
+              className="mb-3 mt-3 w-[calc(100%-2rem)] mx-4 rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+            >
+              Afficher plus ({f.pieces.length - limit} restantes)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

@@ -15,6 +15,8 @@ Déposez le brouillard et la feuille de vérification (le même classeur Verif B
    - *Hors périmètre* : contrepartie hors 460/461/462/467, ou écart trésorerie/appel de fonds sur la pièce ;
    - *Compte oublié* : compte à solde non nul absent de la feuille de vérification (y compris comptes hors blocs, ex. 467101) ;
    - *Écart brouillard / balance* : compte dont le solde du brouillard diffère de la balance des comptes → écriture manquante dans le brouillard ou passée après son export.
+
+   L'onglet commence par les **écarts de famille réels** (familles non soldées) : ce sont eux qu'il faut corriger dans Sage. Pour chaque famille, l'application liste les pièces du brouillard qui composent l'écart — mouvement net de chaque pièce sur le périmètre famille (appel de fonds + trésorerie des membres), trié du plus gros contributeur au plus petit, avec son rôle (à-nouveaux RAN, compte-à-compte 580001, appel de fonds, paiement, arrivée de fonds, annulation, hors schéma), le badge « anomalie » si le contrôle pièce à pièce la signale déjà, et le badge « aussi » quand la même pièce fait l'écart d'une autre famille (mauvais client entre familles). La somme des nets redonne exactement l'écart de la feuille de vérification (Σ vérifiée), et la feuille Excel « Pièces écarts familles » reprend le détail complet.
 4. **Comptes à comptes 580001** : propositions d'écritures de virement quand les fonds sont passés par une autre banque que celle du client (avec détection des virements déjà passés).
 
 Les journaux `RAN` (à-nouveaux) et les pièces `580001` sont exclus de la détection : ils ne sont pas actionnables.
