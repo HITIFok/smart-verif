@@ -1034,9 +1034,8 @@ function EcartsFamilles({
           à-nouveaux (journal RAN) : seuls les RAN portant sur un compte de tiers réel — 401000,
           460, 411 — sont considérés ; les RAN sur les comptes d'attente 462/467, sur les banques
           512/513 ou sur des comptes divers ne sont pas des écritures à corriger (
-          {totalRanNonConsideres.toLocaleString("fr-FR")}
-          pièce(s) écartée(s), total affiché sur chaque famille pour le rapprochement avec l'écart
-          de la feuille).
+          {totalRanNonConsideres.toLocaleString("fr-FR")} pièce(s) écartée(s), total affiché sur
+          chaque famille pour le rapprochement avec l'écart de la feuille).
         </p>
       </div>
       {familles.map((f) => (
@@ -1206,10 +1205,10 @@ function CarteFamilleEcart({
             n'est pas nul : ce sont ces écritures qu'il faut corriger dans Sage pour solder l'écart
             de {fmt(f.ecart)}. Triées du plus gros contributeur au plus petit. Règle RAN : seuls les
             à-nouveaux portant sur 401000, 460 ou 411 sont listés ici ; les{" "}
-            {f.nbRanNonConsidere.toLocaleString("fr-FR")}
-            pièce(s) RAN 462/467, 512/513 ou divers (total {fmt(f.ranNonConsidere)}) ne sont pas des
-            écritures à corriger et sont réintégrées pour rapprocher la somme : {fmt(somme)} +{" "}
-            {fmt(f.ranNonConsidere)} = {fmt(f.ecart)}.
+            {f.nbRanNonConsidere.toLocaleString("fr-FR")} pièce(s) RAN 462/467, 512/513 ou divers
+            (total {fmt(f.ranNonConsidere)}) ne sont pas des écritures à corriger et sont
+            réintégrées pour rapprocher la somme : {fmt(somme)} + {fmt(f.ranNonConsidere)} ={" "}
+            {fmt(f.ecart)}.
           </p>
           <div className="mt-2 divide-y divide-border">
             {f.pieces.slice(0, limit).map((p, i) => (
