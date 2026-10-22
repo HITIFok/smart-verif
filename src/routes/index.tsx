@@ -188,7 +188,7 @@ function Index() {
             icon={<ShieldCheck className="size-4" />}
             label="Contrôles soldés"
             value={`${result.stats.soldees} / ${result.stats.entites}`}
-            sub="Écart inférieur à 0,01"
+            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · écart < 0,01`}
             tone="success"
           />
           <Stat
@@ -243,6 +243,58 @@ function Index() {
         </p>
       ) : tab === "clients" ? (
         <section className="mt-6 space-y-2">
+          {result.familles.length > 0 && (
+            <div className="panel overflow-hidden">
+              <div className="border-b border-border px-4 py-3">
+                <p className="text-sm font-semibold">Vérification par famille de clients</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Comme dans la feuille de vérification, les clients sans banque propre sont soldés
+                  avec la banque de leur famille (ex. MGS avec le 512124 de FSS) : le contrôle est
+                  concluant au niveau de la famille, pas forcément de chaque client isolé.
+                </p>
+              </div>
+              <div className="divide-y divide-border">
+                {result.familles.map((f) => (
+                  <div
+                    key={f.nom}
+                    className="grid gap-2 px-4 py-2.5 text-sm md:grid-cols-[1.4fr_2fr_auto_auto_auto]"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`size-2 shrink-0 rounded-full ${f.soldee ? "bg-success" : "bg-destructive"}`}
+                      />
+                      <span className="font-semibold">{f.nom}</span>
+                      <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                        famille
+                      </span>
+                    </div>
+                    <p className="self-center text-xs text-muted-foreground">
+                      {f.membres.join(" + ")}
+                    </p>
+                    <span className="num self-center text-right text-xs text-muted-foreground">
+                      appel {fmt(f.appelDeFonds)}
+                      <br />
+                      tréso {fmt(f.tresorerie)}
+                    </span>
+                    <span
+                      className={`num self-center text-right font-semibold ${f.ecart < 0 ? "text-destructive" : ""}`}
+                    >
+                      {fmt(f.ecart)}
+                    </span>
+                    <span
+                      className={`self-center rounded px-2 py-1 text-center text-[11px] font-semibold uppercase ${
+                        f.soldee
+                          ? "bg-success/15 text-success"
+                          : "bg-destructive/10 text-destructive"
+                      }`}
+                    >
+                      {f.soldee ? "Soldée" : "Écart"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {result.entites.map((e) => {
             const solde = Math.abs(e.ecart) < 0.01;
             const isOpen = open === e.suffixe + e.nom;
@@ -257,9 +309,18 @@ function Index() {
                       className={`size-2 rounded-full ${solde ? "bg-success" : "bg-destructive"}`}
                     />
                     <div>
-                      <p className="font-semibold">{e.nom}</p>
+                      <p className="font-semibold">
+                        {e.nom}
+                        {e.famille && (
+                          <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                            famille {e.famille}
+                          </span>
+                        )}
+                      </p>
                       <p className="num text-xs text-muted-foreground">
                         suffixe {e.suffixe} · {e.anomalies} anomalie(s)
+                        {e.famille && ` · soldé avec ${e.famille}`}
+                        {!e.famille && e.enfants && ` · famille de ${e.enfants.length} client(s)`}
                       </p>
                     </div>
                   </div>

@@ -9,12 +9,13 @@ Les écritures se trouvent dans `BROUILLARD 2026 20102026.xlsx`.
 Déposez le brouillard et la feuille de vérification (le même classeur Verif BG contient aussi la balance des comptes) :
 
 1. **Tableau de bord par client** : appel de fonds (460/461/462/467) vs trésorerie (512/513) par bloc client, avec écart. Les blocs multi-suffixes (ex. SANLAMALLIANZ COMPAGNIE = 103 + 100 + 501) et les banques partagées (ex. 512600 pour Orange Money / EVIOSYS / INGEDATA / CAMUSAT) sont gérés : la banque compte dans l'écart de son propriétaire uniquement, les entités partageantes l'affichent avec le badge « partagé ».
-2. **Écritures à corriger**, par type :
+2. **Vérification par famille de clients** : comme dans les notes de la feuille « 2026 » du Verif BG, les clients sans banque propre sont soldés avec la banque de leur famille (MGS avec le 512124 de FSS, CAMUSAT/INGEDATA avec le 512600 d'EVIOSYS, JBU/JBS avec le 512320 de BOOST, etc.). Le contrôle est concluant au niveau de la famille, pas forcément de chaque client isolé : 15 familles sont recalculées depuis le brouillard et reproduisent exactement les formules du comptable (FSS+MGS = 0, NACRE+DIR+RAHARIVOLA+KIDS = 0, SANIFER+HOSP+COVID+TAMBOHO+STMB = 2 006,00, EVIOSYS+INGEDATA+CAMUSAT = -4 606 000,00, BOOST+JBU+JBS = -186 186,80…).
+3. **Écritures à corriger**, par type :
    - *Mauvais client* : mouvement de trésorerie soldé sur les comptes d'un autre client ;
    - *Hors périmètre* : contrepartie hors 460/461/462/467, ou écart trésorerie/appel de fonds sur la pièce ;
    - *Compte oublié* : compte à solde non nul absent de la feuille de vérification (y compris comptes hors blocs, ex. 467101) ;
    - *Écart brouillard / balance* : compte dont le solde du brouillard diffère de la balance des comptes → écriture manquante dans le brouillard ou passée après son export.
-3. **Comptes à comptes 580001** : propositions d'écritures de virement quand les fonds sont passés par une autre banque que celle du client (avec détection des virements déjà passés).
+4. **Comptes à comptes 580001** : propositions d'écritures de virement quand les fonds sont passés par une autre banque que celle du client (avec détection des virements déjà passés).
 
 Les journaux `RAN` (à-nouveaux) et les pièces `580001` sont exclus de la détection : ils ne sont pas actionnables.
 

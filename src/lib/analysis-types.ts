@@ -36,6 +36,12 @@ export interface EntitySummary {
   ecart: number;
   anomalies: number;
   montantAnomalies: number;
+  /** Nom de l'entité parente si celle-ci est soldée avec la banque partagée
+   *  d'un autre client (ex. MGS ∈ famille FSS, CAMUSAT ∈ famille EVIOSYS). */
+  famille?: string;
+  /** Membres de la famille dont cette entité est la parente (propriétaire de
+   *  la banque partagée), elle-même incluse. */
+  enfants?: string[];
   comptes: {
     compte: string;
     solde: number;
@@ -46,8 +52,28 @@ export interface EntitySummary {
   }[];
 }
 
+/** Vérification au niveau « famille » : l'entité propriétaire de la banque
+ *  partagée regroupée avec les clients qui y sont soldés. C'est le niveau au
+ * quel le comptable conclut dans les notes de la feuille « 2026 » du Verif BG
+ *  (ex. FSS + MGS = 0, NACRE + DIR + RAHARIVOLA + KIDS = 0). */
+export interface FamilleVerif {
+  /** Entité parente (propriétaire de la banque partagée). */
+  nom: string;
+  /** Parent + enfants, l'ordre du parent vers les enfants. */
+  membres: string[];
+  appelDeFonds: number;
+  tresorerie: number;
+  /** Vérification famille : appel de fonds + trésorerie (0 = soldée). */
+  ecart: number;
+  soldee: boolean;
+}
+
 export interface AnalysisResult {
   entites: EntitySummary[];
+  /** Familles de clients soldés ensemble sur une banque partagée, triées par
+   *  |écart| décroissant. Une famille soldée n'est pas un écart à corriger,
+   *  même si ses membres pris isolément le semblent. */
+  familles: FamilleVerif[];
   anomalies: Anomaly[];
   transferts: TransferProposal[];
   stats: {
@@ -55,6 +81,8 @@ export interface AnalysisResult {
     pieces: number;
     entites: number;
     soldees: number;
+    familles: number;
+    famillesSoldees: number;
     ecartTotal: number;
     parType: Record<AnomalyType, number>;
   };

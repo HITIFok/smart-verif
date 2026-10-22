@@ -18,6 +18,7 @@ export function exportAnomalies(result: AnalysisResult) {
   const synthese = result.entites.map((e) => ({
     Client: e.nom,
     Suffixe: e.suffixe,
+    ...(e.famille ? { Famille: e.famille } : {}),
     "Solde appel de fonds": e.appelDeFonds,
     "Solde trésorerie": e.tresorerie,
     Écart: e.ecart,
@@ -25,6 +26,16 @@ export function exportAnomalies(result: AnalysisResult) {
     "Nb anomalies": e.anomalies,
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(synthese), "Synthèse clients");
+
+  const familles = result.familles.map((f) => ({
+    Famille: f.nom,
+    Membres: f.membres.join(" + "),
+    "Solde appel de fonds": f.appelDeFonds,
+    "Solde trésorerie": f.tresorerie,
+    "Vérification (écart)": f.ecart,
+    Statut: f.soldee ? "Soldée" : "Écart à corriger",
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(familles), "Vérification familles");
 
   const anomalies = result.anomalies.map((a) => ({
     Type: LABELS[a.type] ?? a.type,

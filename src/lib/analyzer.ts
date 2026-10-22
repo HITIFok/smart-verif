@@ -1,7 +1,13 @@
 import * as XLSX from "xlsx";
-import type { AnalysisResult, Anomaly, EntitySummary, EntryLine } from "./analysis-types";
+import type {
+  AnalysisResult,
+  Anomaly,
+  EntitySummary,
+  EntryLine,
+  FamilleVerif,
+} from "./analysis-types";
 import { detectTransfers } from "./transfers";
-import { SHARED_BANK } from "./shared-bank";
+import { BANQUE_PROPRIETAIRE, SHARED_BANK } from "./shared-bank";
 import { matchPieceSchema } from "./schema-ecritures";
 import { avecLibelle } from "./referentiel";
 
@@ -219,6 +225,16 @@ export function analyse(
   // plusieurs entités partagent le même 512, ex. 512600).
   const ownerOf = new Map<string, VerifEntity>();
   for (const b of bankAccounts) {
+    // Rattachement explicite (ex. 512600 -> EVIOSYS, cf. formule du comptable
+    // dans la feuille « 2026 » du Verif BG) : prime sur l'ordre des blocs.
+    const forcé = BANQUE_PROPRIETAIRE.get(b);
+    if (forcé) {
+      const scope = scopes.find((s) => s.e.nom === forcé);
+      if (scope) {
+        ownerOf.set(b, scope.e);
+        continue;
+      }
+    }
     const owner =
       scopes.find((s) => s.trListed.includes(b)) ??
       scopes.find((s) => s.e.suffixesAf.includes(b.slice(3))) ??
@@ -502,10 +518,57 @@ export function analyse(
   entites.sort((a, b) => Math.abs(b.ecart) - Math.abs(a.ecart));
   anomalies.sort((a, b) => Math.abs(b.montant) - Math.abs(a.montant));
 
+  // Familles : les clients sans banque propre (SHARED_BANK) sont soldés avec la
+  // banque de leur parent. C'est le niveau où le comptable conclut dans les
+  // notes de la feuille « 2026 » (ex. FSS+MGS = 0, NACRE+DIR+RAHARIVOLA+KIDS = 0,
+  // SANIFER+HOSP+COVID+TAMBOHO+STMB = 2 006,00). Une entité qui pointe vers sa
+  // propre banque (ex. BOOST -> 320) n'est pas un enfant.
+  const byNomEntite = new Map(entites.map((e) => [e.nom, e]));
+  const famillesMap = new Map<string, { parent: EntitySummary; enfants: EntitySummary[] }>();
+  for (const e of entites) {
+    const suf = SHARED_BANK.get(e.nom);
+    if (!suf) continue;
+    const bank = bankAccounts.has(`512${suf}`)
+      ? `512${suf}`
+      : bankAccounts.has(`513${suf}`)
+        ? `513${suf}`
+        : null;
+    if (!bank) continue;
+    const parent = ownerOf.get(bank);
+    if (!parent || parent.nom === e.nom) continue;
+    const entry = famillesMap.get(parent.nom) ?? {
+      parent: byNomEntite.get(parent.nom)!,
+      enfants: [],
+    };
+    if (!entry.enfants.some((x) => x.nom === e.nom)) entry.enfants.push(e);
+    famillesMap.set(parent.nom, entry);
+  }
+  const familles: FamilleVerif[] = [];
+  for (const { parent, enfants } of famillesMap.values()) {
+    const membres = [parent, ...enfants];
+    const appel = round2(membres.reduce((t, m) => t + m.appelDeFonds, 0));
+    const treso = round2(membres.reduce((t, m) => t + m.tresorerie, 0));
+    const ecartFamille = round2(appel + treso);
+    familles.push({
+      nom: parent.nom,
+      membres: membres.map((m) => m.nom),
+      appelDeFonds: appel,
+      tresorerie: treso,
+      ecart: ecartFamille,
+      soldee: Math.abs(ecartFamille) < 0.01,
+    });
+    parent.enfants = membres.map((m) => m.nom);
+    for (const enfant of enfants) {
+      enfant.famille = parent.nom;
+    }
+  }
+  familles.sort((a, b) => Math.abs(b.ecart) - Math.abs(a.ecart));
+
   const transferts = detectTransfers(lignes, suffixToNom);
 
   return {
     entites,
+    familles,
     anomalies,
     transferts,
     stats: {
@@ -513,6 +576,8 @@ export function analyse(
       pieces: pieces.size,
       entites: entites.length,
       soldees: entites.filter((e) => Math.abs(e.ecart) < 0.01).length,
+      familles: familles.length,
+      famillesSoldees: familles.filter((f) => f.soldee).length,
       ecartTotal: round2(entites.reduce((t, e) => t + Math.abs(e.ecart), 0)),
       parType: {
         mauvais_client: anomalies.filter((a) => a.type === "mauvais_client").length,

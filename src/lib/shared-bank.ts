@@ -40,3 +40,14 @@ export const SHARED_BANK = new Map<string, string>([
   ["DHL EXPRESS", "120"], // compte 512120
   ["MGS", "124"], // compte 512124 (BNI MGS/FSS)
 ]);
+
+/**
+ * Propriétaire explicite d'un compte de trésorerie listé par plusieurs blocs
+ * de la feuille de vérification. 512600 (BOA EVIOSYS) figure à la fois dans le
+ * bloc ORANGE MONEY MADAGASCAR (suffixe 600) et dans le bloc EVIOSYS de la
+ * feuille « 2026 » du Verif BG ; la formule de contrôle du comptable
+ * (G542 = E544+E553+E560, G543 = E546) le rattache à la famille EVIOSYS
+ * (EVIOSYS + INGEDATA + CAMUSAT), ce que confirment les écritures du
+ * brouillard : 512600 paie les factures CAMUSAT/SONOCO (46x603).
+ */
+export const BANQUE_PROPRIETAIRE = new Map<string, string>([["512600", "EVIOSYS"]]);
