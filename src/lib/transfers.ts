@@ -1,5 +1,6 @@
 import type { EntryLine } from "./analysis-types";
 import { SHARED_BANK } from "./shared-bank";
+import { BANQUES_PAR_SOCIETE, BANQUES_PAR_SUFFIXE } from "./banques-societes";
 
 export type OperationType = "appel_de_fonds" | "paiement" | "honoraires";
 export type TransferStatus = "a_creer" | "existe_deja" | "manuel";
@@ -59,14 +60,22 @@ export function detectTransfers(
   }
 
   const bankAccounts = new Set(lignes.filter((l) => isBank(l.compte)).map((l) => l.compte));
-  const ownBank = (s: string) => {
+  // Banques « propres » d'un client : son 512 direct, un 512 partagé
+  // (SHARED_BANK) ou sa banque Mobile Money 513 mappée (BANQUES_PAR_SUFFIXE :
+  // MVOTEL 513140 pour TELMA, MVOHOL 513110 pour SANLAMALLIANZ COMPAGNIE).
+  const ownBanks = (s: string): string[] => {
+    const out: string[] = [];
     const direct = `512${s}`;
-    if (bankAccounts.has(direct)) return direct;
+    if (bankAccounts.has(direct)) out.push(direct);
     const nom = nomParSuffixe.get(s);
     const aliasSuffix = nom ? SHARED_BANK.get(nom) : undefined;
     const aliasAcc = aliasSuffix ? `512${aliasSuffix}` : null;
-    return aliasAcc && bankAccounts.has(aliasAcc) ? aliasAcc : null;
+    if (aliasAcc && bankAccounts.has(aliasAcc) && !out.includes(aliasAcc)) out.push(aliasAcc);
+    for (const acc of BANQUES_PAR_SUFFIXE.get(s) ?? [])
+      if (bankAccounts.has(acc) && !out.includes(acc)) out.push(acc);
+    return out;
   };
+  const ownBank = (s: string) => ownBanks(s)[0] ?? null;
 
   // MCI own bank account = dominant 512 of a journal named *MCI (bank journal, not MVO)
   const mciCounts = new Map<string, number>();
@@ -74,6 +83,13 @@ export function detectTransfers(
     if (/^(BOA|BNI).*MCI$/.test(l.journal) && l.compte.startsWith("512"))
       mciCounts.set(l.compte, (mciCounts.get(l.compte) ?? 0) + 1);
   const mciBank = [...mciCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  // Banques de la maison MCI CARE : journaux BOA/BNI *MCI + banques mappées
+  // (BNITEM 512005 — BNI, MVOMCI 513000 — Mobile Money MVOLA de MCI CARE).
+  const mciBanks = new Set<string>(
+    [...(BANQUES_PAR_SOCIETE.get("MCI CARE") ?? []), mciBank].filter(
+      (b): b is string => b !== null && bankAccounts.has(b),
+    ),
+  );
 
   // Existing 580001 transfers, to avoid duplicates
   const existing = new Map<string, number>();
@@ -206,7 +222,7 @@ export function detectTransfers(
               ? "Plusieurs comptes bancaires sur la pièce"
               : `Compte 512${s} du client introuvable dans le brouillard`,
           );
-        } else if (bank !== dest) {
+        } else if (bank && !ownBanks(s).includes(bank)) {
           push(
             {
               ...common,
@@ -276,7 +292,7 @@ export function detectTransfers(
                   : `Compte 512${s} du client introuvable`,
             );
           }
-        } else if (payBank !== src) {
+        } else if (!ownBanks(s).includes(payBank)) {
           push(
             { ...common, banqueSource: src, banqueDestination: payBank },
             `Paiement réglé par ${payBank} (${first.journal}) au lieu du compte client ${src}`,
@@ -296,7 +312,7 @@ export function detectTransfers(
           compteTiers: l.compte,
           montant: m,
         };
-        if (!bank || !mciBank) {
+        if (!bank || (mciBanks.size === 0 && !mciBank)) {
           push(
             { ...common, banqueSource: bank ?? banks.join("/"), banqueDestination: mciBank ?? "?" },
             "",
@@ -304,10 +320,11 @@ export function detectTransfers(
               ? "Plusieurs comptes bancaires sur la pièce"
               : "Compte bancaire MCI non identifié",
           );
-        } else if (bank !== mciBank) {
+        } else if (!mciBanks.has(bank)) {
+          const dest = mciBank ?? [...mciBanks][0]!;
           push(
-            { ...common, banqueSource: bank, banqueDestination: mciBank },
-            `Honoraire encaissé sur ${bank} (${first.journal}) au lieu du compte MCI ${mciBank}`,
+            { ...common, banqueSource: bank, banqueDestination: dest },
+            `Honoraire encaissé sur ${bank} (${first.journal}) au lieu du compte MCI ${dest}`,
           );
         }
       }

@@ -1,6 +1,12 @@
 import type { EntryLine } from "./analysis-types";
+import { BANQUES_SOCIETES } from "./banques-societes";
 
 export type SchemaRole = "appel_de_fonds" | "paiement_tiers" | "paiement_banque" | "arrivee_fonds";
+
+/** Journaux bancaires par société (BNITEM 512005 — MCI CARE, MVOTEL 513140 — TELMA…). */
+const JOURNAUX_BANQUE = BANQUES_SOCIETES.map((b) => `${b.journal} ${b.compte} (${b.societe})`).join(
+  " ; ",
+);
 
 export interface LigneSchema {
   compte: string;
@@ -68,7 +74,11 @@ export const SCHEMA_ECRITURES: EtapeSchema[] = [
         sens: "Débit",
         note: "Prestataire ou client payé (401000 + compte tiers)",
       },
-      { compte: "512", sens: "Crédit", note: "Banque qui décaisse le paiement" },
+      {
+        compte: "512",
+        sens: "Crédit",
+        note: `Banque 512/513 de la société qui décaisse (${JOURNAUX_BANQUE})`,
+      },
     ],
   },
   {
@@ -77,7 +87,11 @@ export const SCHEMA_ECRITURES: EtapeSchema[] = [
     journal: "BANQUE",
     titre: "Arrivée des fonds en banque",
     lignes: [
-      { compte: "512", sens: "Débit", note: "Banque du client qui reçoit les fonds" },
+      {
+        compte: "512",
+        sens: "Débit",
+        note: `Banque 512/513 de la société qui reçoit les fonds (${JOURNAUX_BANQUE})`,
+      },
       { compte: "460", sens: "Crédit", note: "Compte 460 du client (460 + suffixe)" },
     ],
   },

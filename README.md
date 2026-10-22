@@ -31,6 +31,19 @@ L'application retrace le cycle complet dans l'onglet « Schéma des écritures �
 
 Le compte 401000 + compte tiers matérialise le paiement des prestataires ou clients : les écritures conformes à ce schéma (étapes 2 et 3) ne sont plus signalées comme anomalies. L'arrivée des fonds en banque (512 Débit / 460 Crédit) solde le cycle.
 
+### Banques des sociétés (journaux de trésorerie)
+
+Chaque société encaisse et décaisse sur ses propres comptes 512/513 : le compte de banque des étapes 3 et 4 est celui de la société concernée. La cartographie (`src/lib/banques-societes.ts`) est affichée dans l'onglet « Schéma des écritures » et exportée dans la feuille « Banques des sociétés » :
+
+| Journal Sage | Compte | Intitulé plan | Type | Société | Suffixe(s) client |
+|---|---|---|---|---|---|
+| BNITEM | 512005 | BNI MCI TEMPORAIRE | Banque (BNI) | MCI CARE | — |
+| MVOMCI | 513000 | M-VOLA, MCI | Mobile Money MVOLA | MCI CARE | — |
+| MVOTEL | 513140 | M-VOLA, TELMA | Mobile Money MVOLA | TELMA | 140 |
+| MVOHOL | 513110 | M-VOLA, SANLAM/ALLIANZ | Mobile Money MVOLA | SANLAMALLIANZ COMPAGNIE | 103 |
+
+BNITEM 512005 sert aussi à MCI CARE, en complément du Mobile Money MVOMCI 513000. MVOHOL 513110 est la banque MVOLA de SANLAMALLIANZ COMPAGNIE sur fixe 103. Cette cartographie est utilisée par la détection des comptes à comptes : un encaissement passé sur le MVOLA de la société (513) est reconnu comme sa banque propre et ne déclenche pas de 580001 à tort, tout comme les honoraires MCI encaissés sur BNITEM 512005 ou MVOMCI 513000.
+
 ## Référentiel : plan comptable & plan tiers Sage
 
 Le plan comptable (434 comptes) et le plan tiers (836 tiers) de **MCI CARE MADAGASCAR** (Sage 100cloud Comptabilité, tirage du 21/10/26) sont intégrés à l'application :

@@ -17,6 +17,7 @@ import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
 import { CYCLE_CHAIN, SCHEMA_ECRITURES } from "@/lib/schema-ecritures";
 import type { EtapeSchema } from "@/lib/schema-ecritures";
+import { BANQUES_SOCIETES } from "@/lib/banques-societes";
 import {
   avecLibelle,
   decrireCompte,
@@ -492,7 +493,67 @@ function SchemaEcritures() {
           <EtapeCard key={etape.etape} etape={etape} />
         ))}
       </div>
+      <BanquesSocietes />
     </section>
+  );
+}
+
+/** Cartographie des journaux de trésorerie et des comptes 512/513 par société. */
+function BanquesSocietes() {
+  return (
+    <div className="panel mt-4 overflow-hidden">
+      <div className="border-b border-border px-4 py-3">
+        <p className="text-sm font-semibold">Banques des sociétés — journaux de trésorerie</p>
+        <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+          Chaque société encaisse et décaisse sur ses propres comptes 512/513 : le compte de banque
+          des étapes 3 et 4 est donc celui de la société concernée. BNITEM 512005 (BNI MCI
+          TEMPORAIRE) est aussi la banque de MCI CARE, aux côtés du Mobile Money MVOMCI 513000
+          (MVOLA) ; MVOTEL 513140 est la banque MVOLA de TELMA ; MVOHOL 513110 est la banque MVOLA
+          de SANLAMALLIANZ COMPAGNIE sur fixe 103.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+              <th className="px-4 py-2 font-semibold">Journal</th>
+              <th className="px-4 py-2 font-semibold">Compte</th>
+              <th className="px-4 py-2 font-semibold">Intitulé plan</th>
+              <th className="px-4 py-2 font-semibold">Type</th>
+              <th className="px-4 py-2 font-semibold">Société</th>
+              <th className="px-4 py-2 font-semibold">Suffixe(s) client</th>
+            </tr>
+          </thead>
+          <tbody>
+            {BANQUES_SOCIETES.map((b) => (
+              <tr key={b.compte} className="border-b border-border/60 last:border-0">
+                <td className="px-4 py-2.5 font-semibold">{b.journal}</td>
+                <td className="num px-4 py-2.5">{b.compte}</td>
+                <td className="px-4 py-2.5 text-muted-foreground">{b.intitule}</td>
+                <td className="px-4 py-2.5">
+                  <span className="rounded bg-secondary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {b.operateur ? `${b.operateur} · Mobile Money` : b.type}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5">{b.societe}</td>
+                <td className="num px-4 py-2.5 text-muted-foreground">
+                  {b.suffixes.join(", ") || "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {BANQUES_SOCIETES.some((b) => b.note) && (
+        <div className="border-t border-border px-4 py-3">
+          {BANQUES_SOCIETES.filter((b) => b.note).map((b) => (
+            <p key={b.compte} className="text-xs text-muted-foreground">
+              <span className="num font-semibold text-foreground">{b.compte}</span> — {b.note}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

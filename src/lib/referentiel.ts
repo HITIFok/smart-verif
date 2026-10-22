@@ -1,5 +1,6 @@
 import { PLAN_COMPTABLE, type ComptePlan } from "./plan-comptable-data";
 import { PLAN_TIERS, type TiersPlan } from "./plan-tiers-data";
+import { BANQUE_PAR_COMPTE } from "./banques-societes";
 
 export { PLAN_COMPTABLE, PLAN_TIERS };
 export type { ComptePlan, TiersPlan };
@@ -66,8 +67,13 @@ export function decrireCompte(compte: string): string {
 }
 
 /** « 460140 (TELMA SA à encaisser) » — libellé ajouté seulement s'il vient du
- *  plan (intitulé exact ou tiers collectif), jamais d'une famille générique. */
+ *  plan (intitulé exact ou tiers collectif), jamais d'une famille générique.
+ *  Les comptes de banque mappés (BNITEM, MVOMCI, MVOTEL, MVOHOL) affichent en
+ *  plus la société de rattachement : « 513110 (M-VOLA, SANLAM/ALLIANZ ·
+ *  SANLAMALLIANZ COMPAGNIE) ». */
 export function avecLibelle(compte: string): string {
+  const banque = BANQUE_PAR_COMPTE.get(compte);
+  if (banque) return `${compte} (${banque.intitule} · ${banque.societe})`;
   const exact = COMPTE_PAR_NUMERO.get(compte);
   if (exact) return `${compte} (${exact.intitule})`;
   const tiers = tiersDuCollectif(compte);

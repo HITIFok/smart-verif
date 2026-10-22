@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import type { AnalysisResult } from "./analysis-types";
 import { OPERATION_LABELS } from "./transfers";
 import { SCHEMA_ECRITURES } from "./schema-ecritures";
+import { BANQUES_SOCIETES } from "./banques-societes";
 import { decrireComptes, PLAN_COMPTABLE, PLAN_TIERS } from "./referentiel";
 
 const LABELS: Record<string, string> = {
@@ -84,6 +85,18 @@ export function exportAnomalies(result: AnalysisResult) {
     })),
   );
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(schema), "Schéma des écritures");
+
+  const banques = BANQUES_SOCIETES.map((b) => ({
+    Journal: b.journal,
+    Compte: b.compte,
+    "Intitulé plan": b.intitule,
+    Type: b.type,
+    Opérateur: b.operateur ?? "",
+    Société: b.societe,
+    "Suffixe(s) client": b.suffixes.join(", "),
+    Note: b.note ?? "",
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(banques), "Banques des sociétés");
 
   const planComptable = PLAN_COMPTABLE.map((c) => ({
     "N° compte": c.numero,
