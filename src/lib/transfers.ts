@@ -40,6 +40,8 @@ export interface TransferProposal {
 const NON_BANK = new Set(["TIERS", "VENTE", "ACHAT", "RAN", "INVENT", "CAISSE", "OD"]);
 const TRANSFER = "580001";
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const fmtMad = (n: number) =>
+  n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const isBank = (c: string) => c.startsWith("512") || c.startsWith("513");
 
 /**
@@ -96,28 +98,136 @@ export function detectTransfers(
       (b): b is string => b !== null && bankAccounts.has(b),
     ),
   );
+  const honoDest = mciBank ?? [...mciBanks][0] ?? null;
 
-  // Existing 580001 transfers, to avoid duplicates
-  const existing = new Map<string, number>();
-  const bump = (k: string) => existing.set(k, (existing.get(k) ?? 0) + 1);
+  // Société (client ou maison) rattachée à chaque compte bancaire du
+  // brouillard : l'analyse raisonne « comme un comptable », au niveau société —
+  // plusieurs banques d'une même société sont interchangeables pour couvrir un
+  // compte-à-compte (BNITEM 512005, BOAMCI 512000 et MVOMCI 513000 appartiennent
+  // toutes les trois à MCI CARE). La cartographie explicite est prioritaire.
+  const societeParBanque = new Map<string, string>();
+  for (const [sfx, nom] of nomParSuffixe) {
+    const direct = `512${sfx}`;
+    if (bankAccounts.has(direct)) societeParBanque.set(direct, nom);
+    const aliasSfx = SHARED_BANK.get(nom);
+    const aliasAcc = aliasSfx ? `512${aliasSfx}` : null;
+    if (aliasAcc && bankAccounts.has(aliasAcc)) societeParBanque.set(aliasAcc, nom);
+  }
+  for (const [sfx, banques] of BANQUES_PAR_SUFFIXE) {
+    const nom = nomParSuffixe.get(sfx);
+    if (!nom) continue;
+    for (const b of banques) if (bankAccounts.has(b)) societeParBanque.set(b, nom);
+  }
+  for (const [socNom, banques] of BANQUES_PAR_SOCIETE)
+    for (const b of banques) societeParBanque.set(b, socNom);
+  const societeDe = (compte: string) => societeParBanque.get(compte) ?? compte;
+
+  // Comptes-à-comptes 580001 déjà passés dans le brouillard : envoi = 580001 D
+  // / 512-513 C ; réception = 580001 C / 512-513 D. Sert à reconnaître ce qui
+  // est déjà comptabilisé (les « sans erreurs ») et à ne jamais demander un
+  // doublon.
+  type MouvementExistant = { compte: string; societe: string; montant: number; pris: boolean };
+  const envois: MouvementExistant[] = [];
+  const receptions: MouvementExistant[] = [];
   for (const g of pieces.values()) {
     if (!g.some((l) => l.compte === TRANSFER)) continue;
     for (const l of g) {
       if (!isBank(l.compte)) continue;
-      if (l.credit) bump(`out|${l.compte}|${r2(l.credit)}`);
-      if (l.debit) bump(`in|${l.compte}|${r2(l.debit)}`);
+      if (l.credit)
+        envois.push({
+          compte: l.compte,
+          societe: societeDe(l.compte),
+          montant: r2(l.credit),
+          pris: false,
+        });
+      if (l.debit)
+        receptions.push({
+          compte: l.compte,
+          societe: societeDe(l.compte),
+          montant: r2(l.debit),
+          pris: false,
+        });
     }
   }
-  const consume = (from: string, to: string, m: number) => {
-    const ko = `out|${from}|${m}`;
-    const ki = `in|${to}|${m}`;
-    if ((existing.get(ko) ?? 0) > 0 && (existing.get(ki) ?? 0) > 0) {
-      existing.set(ko, existing.get(ko)! - 1);
-      existing.set(ki, existing.get(ki)! - 1);
-      return true;
-    }
-    return false;
+
+  // Cherche un couple envoi/réception 580001 déjà passé couvrant (from → to,
+  // montant m) : d'abord à l'identique, puis au niveau société de chaque côté —
+  // un CàC passé depuis une autre banque de la même société (ex. BNITEM 512005
+  // au lieu de MVOMCI 513000) couvre tout autant l'écriture.
+  const prendre = (
+    liste: MouvementExistant[],
+    compte: string,
+    societe: string,
+    m: number,
+    auNiveauSociete: boolean,
+  ): MouvementExistant | null => {
+    const trouve =
+      liste.find(
+        (x) =>
+          !x.pris &&
+          x.montant === m &&
+          (auNiveauSociete ? x.societe === societe : x.compte === compte),
+      ) ?? null;
+    if (trouve) trouve.pris = true;
+    return trouve;
   };
+  const consume = (
+    from: string,
+    to: string,
+    m: number,
+  ): { envoi: MouvementExistant; reception: MouvementExistant } | null => {
+    const so = societeDe(from);
+    const si = societeDe(to);
+    for (const nivOut of [false, true])
+      for (const nivIn of [false, true]) {
+        const e = prendre(envois, from, so, m, nivOut);
+        if (!e) continue;
+        const r = prendre(receptions, to, si, m, nivIn);
+        if (r) return { envoi: e, reception: r };
+        e.pris = false; // rendre l'envoi avant d'essayer la combinaison suivante
+      }
+    return null;
+  };
+
+  // Couvre un besoin agrégé (total des honoraires regroupés sur une banque)
+  // avec les couples 580001 déjà passés depuis la même société vers une banque
+  // MCI. Paires les plus petites d'abord ; une paire plus grande que le reste
+  // peut le couvrir en débordant. Retourne le montant couvert et marque les
+  // mouvements utilisés (jamais comptés deux fois).
+  const couvrirAgrege = (bank: string, besoin: number): number => {
+    const so = societeDe(bank);
+    let couvert = 0;
+    const dispos = envois
+      .filter((e) => !e.pris && e.societe === so)
+      .sort((a, b) => a.montant - b.montant);
+    for (const e of dispos) {
+      if (couvert >= besoin) break;
+      const resteBesoin = r2(besoin - couvert);
+      const r = receptions.find(
+        (x) => !x.pris && x.montant === e.montant && mciBanks.has(x.compte),
+      );
+      if (!r) continue;
+      e.pris = true;
+      r.pris = true;
+      couvert = e.montant <= resteBesoin ? r2(couvert + e.montant) : besoin;
+    }
+    return couvert;
+  };
+
+  // Candidats honoraires/revenus (411, 606200) encaissés hors banques MCI,
+  // regroupés par banque d'encaissement après la boucle principale.
+  const honoCands: {
+    piece: string;
+    journal: string;
+    date: string;
+    libelle: string;
+    compteTiers: string;
+    m: number;
+    bank: string;
+  }[] = [];
+
+  const decrireMv = (mv: MouvementExistant) =>
+    `${journalBanque.get(mv.compte) ?? mv.societe} ${mv.compte}`.trim();
 
   // TIERS payments: 401 credit (tiers + amount) -> client suffix of the 467 debit.
   // Two keys: precise (tiers|amount|piece) and loose (tiers|amount) as fallback.
@@ -151,15 +261,19 @@ export function detectTransfers(
     p: Omit<TransferProposal, "id" | "statut" | "envoyeur" | "receptionnaire" | "motif">,
     motifBase: string,
     forcedManual?: string,
+    statutPredef?: TransferStatus,
   ) => {
-    let statut: TransferStatus = "a_creer";
+    let statut: TransferStatus = statutPredef ?? "a_creer";
     let motif = motifBase;
     if (forcedManual) {
       statut = "manuel";
       motif = forcedManual;
-    } else if (consume(p.banqueSource, p.banqueDestination, p.montant)) {
-      statut = "existe_deja";
-      motif = `${motifBase} — écriture 580001 déjà présente, aucun doublon créé`;
+    } else if (!statutPredef) {
+      const cov = consume(p.banqueSource, p.banqueDestination, p.montant);
+      if (cov) {
+        statut = "existe_deja";
+        motif = `${motifBase} — compte-à-compte 580001 déjà passé (${decrireMv(cov.envoi)} → ${decrireMv(cov.reception)}) : aucun doublon à créer`;
+      }
     }
     const ok = statut !== "manuel";
     out.push({
@@ -309,35 +423,92 @@ export function detectTransfers(
       // 3. Honoraires / revenus MCI CARE : 411 ou 606200 C / 512 D.
       // Les 411 (honoraires) et 606200 (revenus) de MCI CARE encaissés sur la
       // banque d'un client (ex. BOATSA 411140 C / 512140 D) doivent repartir
-      // vers une banque de MCI CARE via 580001 : BOATSA 580001 D / 512140 C
-      // puis BOAMCI 580001 C / 512000 D (ou BNITEM 580001 C / 512005 D).
+      // vers une banque de MCI CARE via 580001. Ils ne partent pas un à un :
+      // plusieurs écritures peuvent être payées en compte-à-compte ENSEMBLE
+      // (ex. deux 411140 de 1 000 → un seul CàC de 2 000). On collecte donc
+      // les candidats ; le regroupement par banque se fait après la boucle.
       if ((p3 === "411" || l.compte.startsWith("6062")) && l.credit) {
         const m = r2(l.credit);
-        const dest = mciBank ?? [...mciBanks][0] ?? null;
-        const common = {
-          ...base,
-          type: "honoraires" as const,
-          entite: "MCI",
-          journalSource: first.journal,
-          journalDestination: (dest ? journalBanque.get(dest) : undefined) ?? "BANQUE",
-          compteTiers: l.compte,
-          montant: m,
-        };
-        if (!bank || (mciBanks.size === 0 && !mciBank)) {
+        if (!bank || mciBanks.size === 0) {
           push(
-            { ...common, banqueSource: bank ?? banks.join("/"), banqueDestination: mciBank ?? "?" },
+            {
+              ...base,
+              type: "honoraires" as const,
+              entite: "MCI",
+              journalSource: first.journal,
+              journalDestination: (honoDest ? journalBanque.get(honoDest) : undefined) ?? "BANQUE",
+              compteTiers: l.compte,
+              banqueSource: bank ?? banks.join("/"),
+              banqueDestination: mciBank ?? "?",
+              montant: m,
+            },
             "",
             !bank
               ? "Plusieurs comptes bancaires sur la pièce"
               : "Compte bancaire MCI non identifié",
           );
         } else if (!mciBanks.has(bank)) {
-          push(
-            { ...common, banqueSource: bank, banqueDestination: dest! },
-            `Honoraire encaissé sur ${bank} (${first.journal}) au lieu du compte MCI ${dest}`,
-          );
+          honoCands.push({
+            piece: first.piece,
+            journal: first.journal,
+            date: first.date,
+            libelle: first.libelle,
+            compteTiers: l.compte,
+            m,
+            bank,
+          });
         }
       }
+    }
+  }
+
+  // Regroupement des honoraires/revenus par banque d'encaissement : ils ne
+  // partent pas un à un en compte-à-compte mais peuvent être payés ensemble
+  // (ex. deux 411140 de 1 000 dans BOATSA → un CàC de 2 000). On compare le
+  // total encaissé aux couples 580001 déjà passés depuis la même société vers
+  // une banque MCI ; seul le solde non couvert reste à créer, en une écriture.
+  const parBanque = new Map<string, typeof honoCands>();
+  for (const c of honoCands) {
+    const arr = parBanque.get(c.bank);
+    if (arr) arr.push(c);
+    else parBanque.set(c.bank, [c]);
+  }
+  if (honoDest) {
+    for (const [bank, cands] of parBanque) {
+      const total = r2(cands.reduce((s, c) => s + c.m, 0));
+      const couvert = couvrirAgrege(bank, total);
+      const reste = r2(Math.max(0, total - couvert));
+      const n = cands.length;
+      const piecesUniques = [...new Set(cands.map((c) => c.piece))];
+      const comptesUniques = [...new Set(cands.map((c) => c.compteTiers))];
+      push(
+        {
+          type: "honoraires",
+          entite: "MCI",
+          journalSource: cands[0]!.journal,
+          journalDestination: journalBanque.get(honoDest) ?? "BANQUE",
+          piece:
+            piecesUniques.length === 1
+              ? piecesUniques[0]!
+              : `${piecesUniques[0]!} +${piecesUniques.length - 1}`,
+          date: cands[0]!.date,
+          libelle: cands[0]!.libelle,
+          compteTiers:
+            comptesUniques.length === 1
+              ? comptesUniques[0]!
+              : `${comptesUniques[0]!} +${comptesUniques.length - 1}`,
+          banqueSource: bank,
+          banqueDestination: honoDest,
+          montant: reste > 0 ? reste : total,
+        },
+        reste > 0
+          ? `${n} écriture(s) honoraires/revenus regroupée(s) sur ${bank} (total ${fmtMad(total)})` +
+              (couvert > 0 ? ` ; ${fmtMad(couvert)} déjà transféré(s) via 580001` : "") +
+              ` — reste ${fmtMad(reste)} à transférer vers ${honoDest} en un seul compte-à-compte`
+          : `${n} écriture(s) honoraires/revenus regroupée(s) sur ${bank} (total ${fmtMad(total)}) — déjà couverte(s) par les comptes-à-comptes 580001 passés vers ${honoDest}`,
+        undefined,
+        reste > 0 ? "a_creer" : "existe_deja",
+      );
     }
   }
 

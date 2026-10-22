@@ -527,7 +527,13 @@ function BanquesSocietes() {
           512005 Débit). BOAMCI 512000 (BOA MCI) est la banque principale de MCI CARE ; BNITEM
           512005 (BNI MCI TEMPORAIRE) sert aussi à MCI CARE, aux côtés du Mobile Money MVOMCI 513000
           (MVOLA) ; MVOTEL 513140 est la banque MVOLA de TELMA ; MVOHOL 513110 est la banque MVOLA
-          de SANLAMALLIANZ COMPAGNIE sur fixe 103.
+          de SANLAMALLIANZ COMPAGNIE sur fixe 103. L'analyse raisonne au niveau société : un
+          compte-à-compte déjà passé depuis n'importe quelle banque de la société vers la même
+          destination (ex. BNITEM 512005 → BNIAIT 512210) couvre les fonds arrivés sur une autre
+          banque de la même société (ex. MVOMCI 513000 via le tier FONAITS 460210) — aucun doublon
+          n'est demandé. Les honoraires et revenus ne partent pas un à un : plusieurs écritures
+          411/606200 peuvent être regroupées en un seul compte-à-compte (ex. deux 411140 de 1 000 →
+          un transfert de 2 000) ; seule la part non couverte est proposée, en une écriture.
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -858,7 +864,9 @@ function Transferts({ result }: { result: AnalysisResult }) {
         </select>
       </div>
       <p className="mb-3 text-sm text-muted-foreground">
-        {list.length.toLocaleString("fr-FR")} écriture(s) de compte à compte via 580001
+        {list.length.toLocaleString("fr-FR")} écriture(s) de compte à compte via 580001 — les « Déjà
+        passée » sont reconnues sans erreur (aucun doublon à créer), le compteur d'onglet ne compte
+        que les « À créer ».
       </p>
       <div className="panel divide-y divide-border">
         {list.slice(0, limit).map((t) => (
