@@ -1,7 +1,8 @@
 import type { EntryLine } from "./analysis-types";
 import { BANQUES_SOCIETES } from "./banques-societes";
 
-export type SchemaRole = "appel_de_fonds" | "paiement_tiers" | "paiement_banque" | "arrivee_fonds";
+export type SchemaRole =
+  "appel_de_fonds" | "paiement_tiers" | "paiement_banque" | "arrivee_fonds" | "annulation_paiement";
 
 /** Journaux bancaires par société (BNITEM 512005 — MCI CARE, MVOTEL 513140 — TELMA…). */
 const JOURNAUX_BANQUE = BANQUES_SOCIETES.map((b) => `${b.journal} ${b.compte} (${b.societe})`).join(
@@ -107,6 +108,31 @@ export const CYCLE_CHAIN = SCHEMA_ECRITURES.map((e) =>
     .join(" / "),
 );
 
+/**
+ * Écriture d'annulation de paiement (hors cycle) : la banque rend les fonds et
+ * le compte 401000 + tiers est recredit — 512 Débit / 401000 + compte tiers
+ * Crédit. Écriture normale, jamais signalée comme anomalie.
+ */
+export const SCHEMA_ANNULATION_PAIEMENT: EtapeSchema = {
+  etape: 5,
+  role: "annulation_paiement",
+  journal: "BANQUE",
+  titre: "Annulation de paiement",
+  lignes: [
+    {
+      compte: "512",
+      sens: "Débit",
+      note: "Banque qui rend les fonds (annule le paiement décaissé)",
+    },
+    {
+      compte: "401000",
+      complement: "+ compte tiers",
+      sens: "Crédit",
+      note: "Prestataire ou client remboursé (401000 + compte tiers)",
+    },
+  ],
+};
+
 const isBanque = (c: string) => c.startsWith("512") || c.startsWith("513");
 
 /** Ligne 401 : compte général 401… avec un compte tiers (401000 + tiers). */
@@ -142,6 +168,10 @@ export function matchPieceSchema(group: EntryLine[]): SchemaRole | null {
   // Étape 4 — BANQUE : 512 D / 460 C
   if (debit.every((l) => isBanque(l.compte)) && credit.every((l) => l.compte.startsWith("460")))
     return "arrivee_fonds";
+
+  // Annulation de paiement — BANQUE : 512 D / 401000 + compte tiers C
+  if (debit.every((l) => isBanque(l.compte)) && credit.every(is401Tiers))
+    return "annulation_paiement";
 
   return null;
 }

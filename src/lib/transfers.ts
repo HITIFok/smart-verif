@@ -9,7 +9,7 @@ export type TransferStatus = "a_creer" | "existe_deja" | "manuel";
 export const OPERATION_LABELS: Record<OperationType, string> = {
   appel_de_fonds: "Arrivée des fonds",
   paiement: "Paiement",
-  honoraires: "Honoraires",
+  honoraires: "Honoraires / revenus MCI CARE",
 };
 
 export interface TransferLine {
@@ -60,6 +60,11 @@ export function detectTransfers(
   }
 
   const bankAccounts = new Set(lignes.filter((l) => isBank(l.compte)).map((l) => l.compte));
+  // Journal bancaire de chaque compte 512/513 présent dans le brouillard
+  // (ex. 512000 → BOAMCI) : sert à nommer le journal de saisie du
+  // compte-à-compte de destination.
+  const journalBanque = new Map<string, string>();
+  for (const l of lignes) if (isBank(l.compte)) journalBanque.set(l.compte, l.journal);
   // Banques « propres » d'un client : son 512 direct, un 512 partagé
   // (SHARED_BANK) ou sa banque Mobile Money 513 mappée (BANQUES_PAR_SUFFIXE :
   // MVOTEL 513140 pour TELMA, MVOHOL 513110 pour SANLAMALLIANZ COMPAGNIE).
@@ -84,7 +89,8 @@ export function detectTransfers(
       mciCounts.set(l.compte, (mciCounts.get(l.compte) ?? 0) + 1);
   const mciBank = [...mciCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   // Banques de la maison MCI CARE : journaux BOA/BNI *MCI + banques mappées
-  // (BNITEM 512005 — BNI, MVOMCI 513000 — Mobile Money MVOLA de MCI CARE).
+  // (BOAMCI 512000 — BOA, BNITEM 512005 — BNI, MVOMCI 513000 — Mobile Money
+  // MVOLA de MCI CARE). Destination des honoraires / revenus (411, 606200).
   const mciBanks = new Set<string>(
     [...(BANQUES_PAR_SOCIETE.get("MCI CARE") ?? []), mciBank].filter(
       (b): b is string => b !== null && bankAccounts.has(b),
@@ -300,15 +306,20 @@ export function detectTransfers(
         }
       }
 
-      // 3. Honoraires : 411 C / 512 D
-      if (p3 === "411" && l.credit) {
+      // 3. Honoraires / revenus MCI CARE : 411 ou 606200 C / 512 D.
+      // Les 411 (honoraires) et 606200 (revenus) de MCI CARE encaissés sur la
+      // banque d'un client (ex. BOATSA 411140 C / 512140 D) doivent repartir
+      // vers une banque de MCI CARE via 580001 : BOATSA 580001 D / 512140 C
+      // puis BOAMCI 580001 C / 512000 D (ou BNITEM 580001 C / 512005 D).
+      if ((p3 === "411" || l.compte.startsWith("6062")) && l.credit) {
         const m = r2(l.credit);
+        const dest = mciBank ?? [...mciBanks][0] ?? null;
         const common = {
           ...base,
           type: "honoraires" as const,
           entite: "MCI",
-          journalSource: "VENTE",
-          journalDestination: first.journal,
+          journalSource: first.journal,
+          journalDestination: (dest ? journalBanque.get(dest) : undefined) ?? "BANQUE",
           compteTiers: l.compte,
           montant: m,
         };
@@ -321,9 +332,8 @@ export function detectTransfers(
               : "Compte bancaire MCI non identifié",
           );
         } else if (!mciBanks.has(bank)) {
-          const dest = mciBank ?? [...mciBanks][0]!;
           push(
-            { ...common, banqueSource: bank, banqueDestination: dest },
+            { ...common, banqueSource: bank, banqueDestination: dest! },
             `Honoraire encaissé sur ${bank} (${first.journal}) au lieu du compte MCI ${dest}`,
           );
         }

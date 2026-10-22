@@ -15,7 +15,7 @@ import { exportAnomalies } from "@/lib/export-xlsx";
 import type { AnalysisResult, AnomalyType } from "@/lib/analysis-types";
 import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
-import { CYCLE_CHAIN, SCHEMA_ECRITURES } from "@/lib/schema-ecritures";
+import { CYCLE_CHAIN, SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT } from "@/lib/schema-ecritures";
 import type { EtapeSchema } from "@/lib/schema-ecritures";
 import { BANQUES_SOCIETES } from "@/lib/banques-societes";
 import {
@@ -477,7 +477,8 @@ function SchemaEcritures() {
           matérialise le paiement des prestataires ou clients : côté TIERS (467 au Débit, 401000 +
           compte tiers au Crédit) puis côté banque (401000 + compte tiers au Débit, 512 au Crédit).
           Lorsque les fonds sont arrivés en banque (512 au Débit, 460 au Crédit), le cycle est
-          soldé. L'analyseur reconnaît ces écritures comme normales.
+          soldé. L'analyseur reconnaît ces écritures comme normales, ainsi que l'annulation de
+          paiement (512 au Débit, 401000 + compte tiers au Crédit).
         </p>
         <div className="num mt-4 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
           {CYCLE_CHAIN.map((etape, i) => (
@@ -493,6 +494,19 @@ function SchemaEcritures() {
           <EtapeCard key={etape.etape} etape={etape} />
         ))}
       </div>
+      <div className="mt-4">
+        <div className="panel p-5">
+          <p className="text-sm font-semibold">Annulation de paiement (hors cycle)</p>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Les écritures 401000 + compte tiers au Crédit / 512xxx au Débit sont des annulations de
+            paiement : la banque rend les fonds et le prestataire ou client est recrédité. Elles
+            sont reconnues comme normales et ne sont jamais signalées comme anomalies.
+          </p>
+        </div>
+        <div className="mt-4">
+          <EtapeCard etape={SCHEMA_ANNULATION_PAIEMENT} />
+        </div>
+      </div>
       <BanquesSocietes />
     </section>
   );
@@ -506,8 +520,12 @@ function BanquesSocietes() {
         <p className="text-sm font-semibold">Banques des sociétés — journaux de trésorerie</p>
         <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
           Chaque société encaisse et décaisse sur ses propres comptes 512/513 : le compte de banque
-          des étapes 3 et 4 est donc celui de la société concernée. BNITEM 512005 (BNI MCI
-          TEMPORAIRE) est aussi la banque de MCI CARE, aux côtés du Mobile Money MVOMCI 513000
+          des étapes 3 et 4 est donc celui de la société concernée. Les honoraires et revenus de MCI
+          CARE (411 et 606200) encaissés sur la banque d'un client (ex. BOATSA 411140 Crédit /
+          512140 Débit) doivent repartir vers une banque de MCI CARE via 580001 : BOATSA 580001
+          Débit / 512140 Crédit puis BOAMCI 580001 Crédit / 512000 Débit (ou BNITEM 580001 Crédit /
+          512005 Débit). BOAMCI 512000 (BOA MCI) est la banque principale de MCI CARE ; BNITEM
+          512005 (BNI MCI TEMPORAIRE) sert aussi à MCI CARE, aux côtés du Mobile Money MVOMCI 513000
           (MVOLA) ; MVOTEL 513140 est la banque MVOLA de TELMA ; MVOHOL 513110 est la banque MVOLA
           de SANLAMALLIANZ COMPAGNIE sur fixe 103.
         </p>
@@ -732,7 +750,9 @@ function EtapeCard({ etape }: { etape: EtapeSchema }) {
     <div className="panel overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
         <p className="text-sm font-semibold">
-          <span className="num mr-2 text-muted-foreground">Étape {etape.etape}</span>
+          <span className="num mr-2 text-muted-foreground">
+            {etape.role === "annulation_paiement" ? "Hors cycle" : `Étape ${etape.etape}`}
+          </span>
           {etape.titre}
         </p>
         <span

@@ -31,18 +31,29 @@ L'application retrace le cycle complet dans l'onglet « Schéma des écritures �
 
 Le compte 401000 + compte tiers matérialise le paiement des prestataires ou clients : les écritures conformes à ce schéma (étapes 2 et 3) ne sont plus signalées comme anomalies. L'arrivée des fonds en banque (512 Débit / 460 Crédit) solde le cycle.
 
+### Annulation de paiement (hors cycle)
+
+Les écritures **401000 + compte tiers au Crédit / 512xxx au Débit** sont des **annulations de paiement** : la banque rend les fonds et le prestataire ou client est recrédité. Elles sont reconnues comme normales (rôle `annulation_paiement`) et ne sont jamais signalées comme anomalies ; le schéma complet figure dans l'onglet « Schéma des écritures » et dans l'export Excel.
+
+### Honoraires et revenus MCI CARE (411, 606200)
+
+Les comptes **411** (honoraires) et **606200** (revenus) sont des revenus de MCI CARE. S'ils ne sont pas encaissés directement dans une banque de MCI CARE (BOAMCI 512000, BNITEM 512005), l'application propose le compte à compte 580001 :
+
+> BOATSA `411140 Crédit / 512140 Débit` ⇒ BOATSA `580001 Débit / 512140 Crédit` puis BOAMCI `580001 Crédit / 512000 Débit` (ou BNITEM `580001 Crédit / 512005 Débit`).
+
 ### Banques des sociétés (journaux de trésorerie)
 
 Chaque société encaisse et décaisse sur ses propres comptes 512/513 : le compte de banque des étapes 3 et 4 est celui de la société concernée. La cartographie (`src/lib/banques-societes.ts`) est affichée dans l'onglet « Schéma des écritures » et exportée dans la feuille « Banques des sociétés » :
 
 | Journal Sage | Compte | Intitulé plan | Type | Société | Suffixe(s) client |
 |---|---|---|---|---|---|
+| BOAMCI | 512000 | BOA MCI | Banque (BOA) | MCI CARE | — |
 | BNITEM | 512005 | BNI MCI TEMPORAIRE | Banque (BNI) | MCI CARE | — |
 | MVOMCI | 513000 | M-VOLA, MCI | Mobile Money MVOLA | MCI CARE | — |
 | MVOTEL | 513140 | M-VOLA, TELMA | Mobile Money MVOLA | TELMA | 140 |
 | MVOHOL | 513110 | M-VOLA, SANLAM/ALLIANZ | Mobile Money MVOLA | SANLAMALLIANZ COMPAGNIE | 103 |
 
-BNITEM 512005 sert aussi à MCI CARE, en complément du Mobile Money MVOMCI 513000. MVOHOL 513110 est la banque MVOLA de SANLAMALLIANZ COMPAGNIE sur fixe 103. Cette cartographie est utilisée par la détection des comptes à comptes : un encaissement passé sur le MVOLA de la société (513) est reconnu comme sa banque propre et ne déclenche pas de 580001 à tort, tout comme les honoraires MCI encaissés sur BNITEM 512005 ou MVOMCI 513000.
+BOAMCI 512000 est la banque principale de MCI CARE ; BNITEM 512005 sert aussi à MCI CARE, en complément du Mobile Money MVOMCI 513000. MVOHOL 513110 est la banque MVOLA de SANLAMALLIANZ COMPAGNIE sur fixe 103. Cette cartographie est utilisée par la détection des comptes à comptes : un encaissement passé sur le MVOLA de la société (513) est reconnu comme sa banque propre et ne déclenche pas de 580001 à tort, tandis que les honoraires et revenus MCI CARE (411, 606200) encaissés sur la banque d'un client partent vers BOAMCI 512000 ou BNITEM 512005.
 
 ## Référentiel : plan comptable & plan tiers Sage
 

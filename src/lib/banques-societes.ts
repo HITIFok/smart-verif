@@ -2,6 +2,7 @@
  * Cartographie des journaux bancaires Sage et des comptes de trésorerie
  * (512/513) par société, fournie par l'utilisateur :
  *
+ * - BOAMCI 512000 (BOA MCI) est la banque principale de MCI CARE ;
  * - BNITEM 512005 (BNI MCI TEMPORAIRE) est aussi la banque de MCI CARE ;
  * - MVOMCI 513000 (M-VOLA, MCI) est la banque MVOLA (Mobile Money) de MCI CARE ;
  * - MVOTEL 513140 (M-VOLA, TELMA) est la banque MVOLA (Mobile Money) de TELMA ;
@@ -13,7 +14,10 @@
  *   (UI, anomalies, export Excel) ;
  * - reconnaître comme « banque propre » du client un encaissement passé par
  *   son compte MVOLA (513) et non son 512 direct, sans proposer de
- *   compte-à-compte 580001 à tort (étapes 3 et 4 du schéma du cycle).
+ *   compte-à-compte 580001 à tort (étapes 3 et 4 du schéma du cycle) ;
+ * - faire partir les honoraires et revenus MCI CARE (411 / 606200) vers une
+ *   banque de MCI CARE (BOAMCI 512000 ou BNITEM 512005) quand ils sont
+ *   encaissés sur la banque d'un client.
  */
 
 export type TypeBanque = "Banque" | "Mobile Money";
@@ -36,6 +40,15 @@ export interface BanqueSociete {
 }
 
 export const BANQUES_SOCIETES: BanqueSociete[] = [
+  {
+    journal: "BOAMCI",
+    compte: "512000",
+    intitule: "BOA MCI",
+    type: "Banque",
+    societe: "MCI CARE",
+    suffixes: [],
+    note: "Banque principale (BOA) de MCI CARE — destination des comptes à comptes d'honoraires avec BNITEM",
+  },
   {
     journal: "BNITEM",
     compte: "512005",
