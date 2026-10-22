@@ -95,6 +95,23 @@ export interface PieceEcart {
   aussiDans?: string[];
 }
 
+/** À-nouveau du journal RAN portant sur un compte de tiers réel (401000,
+ *  460, 411) sans toucher le périmètre d'aucune famille : c'est une de ces
+ *  écritures-là qu'il faut considérer (et non les RAN sur les comptes
+ *  d'attente 462/467, qui ne sont pas des corrections à faire). */
+export interface RanTiersPiece {
+  journal: string;
+  piece: string;
+  date: string;
+  libelle: string;
+  /** Comptes de tiers (401000 / 460 / 411) touchés par la pièce. */
+  comptesTiers: string;
+  /** Tous les comptes de la pièce. */
+  comptesTous: string;
+  /** Mouvement net de la pièce sur ces comptes de tiers (Débit − Crédit). */
+  net: number;
+}
+
 /** Vérification au niveau « famille » : l'entité propriétaire de la banque
  *  partagée regroupée avec les clients qui y sont soldés. C'est le niveau au
  * quel le comptable conclut dans les notes de la feuille « 2026 » du Verif BG
@@ -110,9 +127,18 @@ export interface FamilleVerif {
   ecart: number;
   soldee: boolean;
   /** Familles non soldées uniquement : les pièces du brouillard qui composent
-   *  l'écart réel, triées par |net| décroissant. La somme de leurs nets
-   *  redonne exactement l'écart de la feuille de vérification. */
+   *  l'écart réel, triées par |net| décroissant. Règle du comptable : les RAN
+   *  sur les comptes d'attente 462/467 (ainsi que sur 512/513 ou comptes
+   *  divers) ne sont pas considérés — seuls les RAN portant sur 401000, 460
+   *  ou 411 le sont, car ce sont les écritures à corriger dans Sage.
+   *  Rapprochement : Σ pieces + ranNonConsidere = écart feuille. */
   pieces: PieceEcart[];
+  /** Somme des nets (sur le périmètre famille) des pièces RAN NON considérées
+   *  (462/467, 512/513, comptes divers) — la différence entre Σ pieces et
+   *  l'écart de la feuille. */
+  ranNonConsidere: number;
+  /** Nombre de pièces RAN non considérées pour cette famille. */
+  nbRanNonConsidere: number;
 }
 
 export interface AnalysisResult {
@@ -123,6 +149,9 @@ export interface AnalysisResult {
   familles: FamilleVerif[];
   anomalies: Anomaly[];
   transferts: TransferProposal[];
+  /** À-nouveaux du journal RAN portant sur 401000 / 460 / 411 sans toucher le
+   *  périmètre d'aucune famille réelle : les RAN de tiers à considérer. */
+  ranTiers: RanTiersPiece[];
   stats: {
     lignes: number;
     pieces: number;
@@ -132,6 +161,8 @@ export interface AnalysisResult {
     famillesSoldees: number;
     /** Total des pièces composant les écarts de famille réels (familles non soldées). */
     piecesAFixer: number;
+    /** Nombre d'à-nouveaux de tiers (401000/460/411) hors périmètre familles. */
+    ranTiers: number;
     ecartTotal: number;
     parType: Record<AnomalyType, number>;
   };

@@ -12,7 +12,12 @@ import {
 } from "lucide-react";
 import { FileDrop } from "@/components/FileDrop";
 import { exportAnomalies } from "@/lib/export-xlsx";
-import type { AnalysisResult, AnomalyType, FamilleVerif } from "@/lib/analysis-types";
+import type {
+  AnalysisResult,
+  AnomalyType,
+  FamilleVerif,
+  RanTiersPiece,
+} from "@/lib/analysis-types";
 import { PIECE_ROLE_LABELS } from "@/lib/analysis-types";
 import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
@@ -189,7 +194,7 @@ function Index() {
             icon={<ShieldCheck className="size-4" />}
             label="Contrôles soldés"
             value={`${result.stats.soldees} / ${result.stats.entites}`}
-            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) à corriger dans Sage`}
+            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) à corriger dans Sage · ${result.stats.ranTiers.toLocaleString("fr-FR")} RAN de tiers (401000/460/411)`}
             tone="success"
           />
           <Stat
@@ -385,7 +390,10 @@ function Index() {
       ) : (
         <section className="mt-6">
           {result.familles.some((f) => !f.soldee) && (
-            <EcartsFamilles familles={result.familles.filter((f) => !f.soldee)} />
+            <EcartsFamilles
+              familles={result.familles.filter((f) => !f.soldee)}
+              ranTiers={result.ranTiers}
+            />
           )}
           <div className="mb-4 flex flex-wrap gap-3">
             <input
@@ -988,9 +996,19 @@ function Transferts({ result }: { result: AnalysisResult }) {
 
 /** Écarts de famille réels (familles non soldées) : les écritures qu'il faut
  *  corriger dans Sage. Chaque famille liste les pièces du brouillard qui
- *  composent son écart — la somme de leurs mouvements nets sur le périmètre
- *  de la famille redonne exactement l'écart de la feuille de vérification. */
-function EcartsFamilles({ familles }: { familles: FamilleVerif[] }) {
+ *  composent son écart. Règle du comptable : parmi les RAN (journal RAN,
+ *  à-nouveaux d'ouverture), seuls ceux portant sur un compte de tiers réel
+ *  (401000, 460, 411) sont considérés — les RAN sur les comptes d'attente
+ *  462/467, sur les banques 512/513 ou sur des comptes divers ne sont pas
+ *  des écritures à corriger, leur total est affiché à part pour rapprocher
+ *  Σ pièces + RAN non considérés = écart feuille. */
+function EcartsFamilles({
+  familles,
+  ranTiers,
+}: {
+  familles: FamilleVerif[];
+  ranTiers: RanTiersPiece[];
+}) {
   const [ouverts, setOuverts] = useState<Set<string>>(
     () => new Set(familles.slice(0, 1).map((f) => f.nom)),
   );
@@ -1002,6 +1020,7 @@ function EcartsFamilles({ familles }: { familles: FamilleVerif[] }) {
       return next;
     });
   const totalPieces = familles.reduce((t, f) => t + f.pieces.length, 0);
+  const totalRanNonConsideres = familles.reduce((t, f) => t + f.nbRanNonConsidere, 0);
   return (
     <div className="mb-6 space-y-2">
       <div className="panel px-4 py-3">
@@ -1010,10 +1029,14 @@ function EcartsFamilles({ familles }: { familles: FamilleVerif[] }) {
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           Les écarts qui comptent sont ceux des familles non soldées : ce sont eux qu'il faut
-          corriger dans Sage. Pour chaque famille, l'application vérifie l'écart en listant les
-          pièces du brouillard qui le composent — le mouvement net de chaque pièce sur le périmètre
-          de la famille, et la somme de ces nets redonne exactement l'écart de la feuille de
-          vérification ({totalPieces.toLocaleString("fr-FR")} pièce(s) au total).
+          corriger dans Sage. Pour chaque famille, l'application liste les pièces du brouillard qui
+          composent l'écart ({totalPieces.toLocaleString("fr-FR")} pièce(s)). Règle pour les
+          à-nouveaux (journal RAN) : seuls les RAN portant sur un compte de tiers réel — 401000,
+          460, 411 — sont considérés ; les RAN sur les comptes d'attente 462/467, sur les banques
+          512/513 ou sur des comptes divers ne sont pas des écritures à corriger (
+          {totalRanNonConsideres.toLocaleString("fr-FR")}
+          pièce(s) écartée(s), total affiché sur chaque famille pour le rapprochement avec l'écart
+          de la feuille).
         </p>
       </div>
       {familles.map((f) => (
@@ -1024,6 +1047,104 @@ function EcartsFamilles({ familles }: { familles: FamilleVerif[] }) {
           onToggle={() => toggle(f.nom)}
         />
       ))}
+      {ranTiers.length > 0 && <RanTiersListe ranTiers={ranTiers} />}
+    </div>
+  );
+}
+
+/** À-nouveaux de tiers hors familles : RAN portant sur 401000 / 460 / 411
+ *  (comptes de tiers réels à considérer) sans faire l'écart d'aucune famille. */
+function RanTiersListe({ ranTiers }: { ranTiers: RanTiersPiece[] }) {
+  const [ouvert, setOuvert] = useState(false);
+  const [limit, setLimit] = useState(30);
+  const total = ranTiers.reduce((t, p) => t + p.net, 0);
+  return (
+    <div className="panel overflow-hidden">
+      <button
+        onClick={() => setOuvert((o) => !o)}
+        className="grid w-full grid-cols-2 items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60 md:grid-cols-[1.5fr_auto_auto_auto]"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <ChevronDown
+            className={`size-4 shrink-0 text-muted-foreground transition-transform ${ouvert ? "rotate-180" : ""}`}
+          />
+          <div className="min-w-0">
+            <p className="font-semibold">
+              À-nouveaux de tiers à considérer (401000 · 460 · 411)
+              <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                hors familles
+              </span>
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              RAN portant sur un compte de tiers réel sans faire l'écart d'une famille non soldée —
+              à considérer avec les écritures ci-dessus.
+            </p>
+          </div>
+        </div>
+        <span className="num self-center text-right text-xs text-muted-foreground">
+          {ranTiers.length.toLocaleString("fr-FR")} pièce(s)
+        </span>
+        <span
+          className={`num self-center text-right font-bold ${total < 0 ? "text-destructive" : ""}`}
+        >
+          {fmt(total)}
+        </span>
+        <span className="self-center rounded bg-secondary px-2 py-1 text-center text-[11px] font-semibold uppercase text-muted-foreground">
+          RAN tiers
+        </span>
+      </button>
+      {ouvert && (
+        <div className="border-t border-border bg-secondary/30">
+          <p className="px-4 pt-3 text-xs text-muted-foreground">
+            À-nouveaux du journal RAN portant sur 401000 (fournisseurs), 460 (appels de fonds) ou
+            411 (honoraires / clients) — les RAN de tiers qu'il faut considérer, hors périmètre des
+            familles non soldées. Les RAN 462/467 (comptes d'attente) et 512/513 (soldes d'ouverture
+            banque) ne sont pas listés : ce ne sont pas des écritures à corriger.
+          </p>
+          <div className="mt-2 divide-y divide-border">
+            {ranTiers.slice(0, limit).map((p, i) => (
+              <div
+                key={`${p.journal}|${p.piece}|${p.date}|${i}`}
+                className="grid gap-2 px-4 py-2.5 md:grid-cols-[auto_1fr_auto]"
+              >
+                <span className="h-fit rounded bg-secondary px-2 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                  À-nouveaux
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {p.journal || "—"}
+                    <span className="num ml-2 font-normal text-muted-foreground">
+                      pièce {p.piece || "—"} · {p.date}
+                    </span>
+                  </p>
+                  <p className="truncate text-sm text-muted-foreground" title={p.libelle}>
+                    {p.libelle}
+                  </p>
+                  <p className="num truncate text-xs text-muted-foreground" title={p.comptesTous}>
+                    Tiers : {p.comptesTiers}
+                    {p.comptesTous !== p.comptesTiers && (
+                      <span className="text-muted-foreground/70"> · tous : {p.comptesTous}</span>
+                    )}
+                  </p>
+                </div>
+                <span
+                  className={`num h-fit text-right text-sm font-semibold ${p.net < 0 ? "text-destructive" : ""}`}
+                >
+                  {fmt(p.net)}
+                </span>
+              </div>
+            ))}
+          </div>
+          {ranTiers.length > limit && (
+            <button
+              onClick={() => setLimit((l) => l + 100)}
+              className="mb-3 mt-3 w-[calc(100%-2rem)] mx-4 rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+            >
+              Afficher plus ({ranTiers.length - limit} restantes)
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1039,7 +1160,9 @@ function CarteFamilleEcart({
 }) {
   const [limit, setLimit] = useState(30);
   const somme = f.pieces.reduce((t, p) => t + p.net, 0);
-  const verifiee = Math.abs(somme - f.ecart) < 0.02;
+  // Rapprochement : Σ pièces à corriger + RAN non considérés (462/467,
+  // 512/513, comptes divers) = écart de la feuille de vérification.
+  const verifiee = Math.abs(somme + f.ranNonConsidere - f.ecart) < 0.02;
   return (
     <div className="panel overflow-hidden">
       <button
@@ -1073,7 +1196,7 @@ function CarteFamilleEcart({
             verifiee ? "bg-success/15 text-success" : "bg-warning/20 text-accent-foreground"
           }`}
         >
-          {verifiee ? "Σ vérifiée" : "Σ écart"}
+          {verifiee ? "Σ rapprochée" : "Σ écart"}
         </span>
       </button>
       {ouvert && (
@@ -1081,8 +1204,12 @@ function CarteFamilleEcart({
           <p className="px-4 pt-3 text-xs text-muted-foreground">
             Pièces dont le mouvement net sur le périmètre de la famille ({f.membres.join(", ")})
             n'est pas nul : ce sont ces écritures qu'il faut corriger dans Sage pour solder l'écart
-            de {fmt(f.ecart)}. Triées du plus gros contributeur au plus petit ; les journaux RAN
-            (à-nouveaux) portent le solde historique d'ouverture.
+            de {fmt(f.ecart)}. Triées du plus gros contributeur au plus petit. Règle RAN : seuls les
+            à-nouveaux portant sur 401000, 460 ou 411 sont listés ici ; les{" "}
+            {f.nbRanNonConsidere.toLocaleString("fr-FR")}
+            pièce(s) RAN 462/467, 512/513 ou divers (total {fmt(f.ranNonConsidere)}) ne sont pas des
+            écritures à corriger et sont réintégrées pour rapprocher la somme : {fmt(somme)} +{" "}
+            {fmt(f.ranNonConsidere)} = {fmt(f.ecart)}.
           </p>
           <div className="mt-2 divide-y divide-border">
             {f.pieces.slice(0, limit).map((p, i) => (

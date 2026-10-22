@@ -7,6 +7,7 @@ import type {
   FamilleVerif,
   PieceEcart,
   PieceEcartRole,
+  RanTiersPiece,
 } from "./analysis-types";
 import { detectTransfers } from "./transfers";
 import { BANQUE_PROPRIETAIRE, SHARED_BANK } from "./shared-bank";
@@ -16,6 +17,14 @@ import { avecLibelle } from "./referentiel";
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
 const TRANSFER = "580001";
+/** Règle du comptable : parmi les pièces du journal RAN (à-nouveaux), seules
+ *  celles portant sur un compte de tiers réel (401000, 460, 411) sont à
+ *  considérer comme écritures à corriger dans Sage. Les RAN sur les comptes
+ *  d'attente 462/467 (reclassements d'ouverture), sur les banques 512/513
+ *  (soldes d'ouverture) ou sur des comptes divers ne sont pas considérés. */
+const RAN_CONSIDERES = ["401000", "460", "411"];
+const ranConsidere = (group: EntryLine[]): boolean =>
+  group.some((l) => RAN_CONSIDERES.some((p) => l.compte.startsWith(p)));
 
 export interface VerifEntity {
   nom: string;
@@ -546,6 +555,7 @@ export function analyse(
     famillesMap.set(parent.nom, entry);
   }
   const familles: FamilleVerif[] = [];
+  const ranTiers: RanTiersPiece[] = [];
   for (const { parent, enfants } of famillesMap.values()) {
     const membres = [parent, ...enfants];
     const appel = round2(membres.reduce((t, m) => t + m.appelDeFonds, 0));
@@ -559,6 +569,8 @@ export function analyse(
       ecart: ecartFamille,
       soldee: Math.abs(ecartFamille) < 0.01,
       pieces: [],
+      ranNonConsidere: 0,
+      nbRanNonConsidere: 0,
     });
     parent.enfants = membres.map((m) => m.nom);
     for (const enfant of enfants) {
@@ -592,6 +604,8 @@ export function analyse(
         string,
         { net: number; libelle: string; comptes: Set<string>; tous: Set<string> }
       >(),
+      ranNonConsidere: 0,
+      nbRanNonConsidere: 0,
     }));
 
     const roleDe = (journal: string, group: EntryLine[]): PieceEcartRole => {
@@ -601,18 +615,53 @@ export function analyse(
     };
 
     for (const [key, group] of pieces) {
+      const estRan = (key.split("|")[0] ?? "") === "RAN";
+      // Règle du comptable, appliquée au niveau des MOUVEMENTS : dans une
+      // pièce RAN, seuls les mouvements portant sur 401000, 460 ou 411
+      // (comptes de tiers réels) sont considérés — les mouvements RAN sur les
+      // comptes d'attente 462/467, sur les banques 512/513 ou sur 461 ne sont
+      // pas des écritures à corriger dans Sage. (Dans le périmètre famille
+      // 46x + 512/513, seul 460 est donc « considéré » pour un RAN.)
       for (const sf of scopesFamilles) {
-        let net = 0;
+        let netScope = 0;
+        let netConsidere = 0;
         const comptes = new Set<string>();
         for (const l of group) {
           if (!sf.scope.has(l.compte)) continue;
-          net += l.debit - l.credit;
+          netScope += l.debit - l.credit;
+          if (estRan && !RAN_CONSIDERES.some((p) => l.compte.startsWith(p))) continue;
+          netConsidere += l.debit - l.credit;
           comptes.add(l.compte);
         }
-        const netR = round2(net);
-        if (netR === 0) continue;
+        const netScopeR = round2(netScope);
+        if (netScopeR === 0) continue;
+        if (estRan) {
+          const netConsidereR = round2(netConsidere);
+          if (netConsidereR === 0) {
+            // RAN non considéré (462/467, 512/513, 461) : comptabilisé à part
+            // pour le rapprochement Σ pièces à corriger + RAN non considérés
+            // = écart feuille.
+            sf.ranNonConsidere = round2(sf.ranNonConsidere + netScopeR);
+            sf.nbRanNonConsidere++;
+            continue;
+          }
+          const reste = round2(netScopeR - netConsidereR);
+          if (reste !== 0) {
+            // Pièce partiellement considérée (ex. 460 + 467) : la partie RAN
+            // 462/467/512/513 reste comptée dans les non considérés.
+            sf.ranNonConsidere = round2(sf.ranNonConsidere + reste);
+            sf.nbRanNonConsidere++;
+          }
+          sf.acc.set(key, {
+            net: netConsidereR,
+            libelle: group.find((l) => l.libelle)?.libelle ?? "",
+            comptes,
+            tous: new Set(group.map((l) => l.compte)),
+          });
+          continue;
+        }
         sf.acc.set(key, {
-          net: netR,
+          net: netScopeR,
           libelle: group.find((l) => l.libelle)?.libelle ?? "",
           comptes,
           tous: new Set(group.map((l) => l.compte)),
@@ -654,7 +703,52 @@ export function analyse(
       }
       list.sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
       sf.f.pieces = list;
+      sf.f.ranNonConsidere = sf.ranNonConsidere;
+      sf.f.nbRanNonConsidere = sf.nbRanNonConsidere;
     }
+
+    // À-nouveaux de tiers hors familles : pièces RAN portant sur 401000, 460
+    // ou 411 (comptes de tiers réels à considérer) sans être listée dans
+    // aucune famille réelle — c'est-à-dire sans mouvement « considéré » sur
+    // un périmètre famille. Ce sont ces RAN-là que le comptable veut voir,
+    // par opposition aux milliers de RAN 462/467 (comptes d'attente).
+    const scopesToutes = new Set<string>(scopesFamilles.flatMap((sf) => [...sf.scope]));
+    for (const [key, group] of pieces) {
+      if ((key.split("|")[0] ?? "") !== "RAN") continue;
+      if (!ranConsidere(group)) continue;
+      // Mouvements considérés (401000/460/411) sur les périmètres des
+      // familles réelles : si ≠ 0, la pièce est déjà listée dans la famille.
+      const netConsidereScopes = round2(
+        group.reduce(
+          (t, l) =>
+            scopesToutes.has(l.compte) && RAN_CONSIDERES.some((p) => l.compte.startsWith(p))
+              ? t + l.debit - l.credit
+              : t,
+          0,
+        ),
+      );
+      if (netConsidereScopes !== 0) continue;
+      const parts = key.split("|");
+      const comptesTiers = [
+        ...new Set(
+          group.map((l) => l.compte).filter((c) => RAN_CONSIDERES.some((p) => c.startsWith(p))),
+        ),
+      ];
+      ranTiers.push({
+        journal: parts[0] ?? "",
+        piece: parts[1] ?? "",
+        date: parts[2] ?? "",
+        libelle: group.find((l) => l.libelle)?.libelle ?? "",
+        comptesTiers: comptesTiers.join(", "),
+        comptesTous: [...new Set(group.map((l) => l.compte))].sort().join(", "),
+        net: round2(
+          group
+            .filter((l) => comptesTiers.includes(l.compte))
+            .reduce((t, l) => t + l.debit - l.credit, 0),
+        ),
+      });
+    }
+    ranTiers.sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
   }
 
   const transferts = detectTransfers(lignes, suffixToNom);
@@ -664,6 +758,7 @@ export function analyse(
     familles,
     anomalies,
     transferts,
+    ranTiers,
     stats: {
       lignes: lignes.length,
       pieces: pieces.size,
@@ -673,6 +768,7 @@ export function analyse(
       famillesSoldees: familles.filter((f) => f.soldee).length,
       ecartTotal: round2(entites.reduce((t, e) => t + Math.abs(e.ecart), 0)),
       piecesAFixer: familles.filter((f) => !f.soldee).reduce((t, f) => t + f.pieces.length, 0),
+      ranTiers: ranTiers.length,
       parType: {
         mauvais_client: anomalies.filter((a) => a.type === "mauvais_client").length,
         hors_perimetre: anomalies.filter((a) => a.type === "hors_perimetre").length,

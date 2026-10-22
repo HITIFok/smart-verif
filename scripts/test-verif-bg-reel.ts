@@ -84,7 +84,9 @@ const ab = (b: Buffer) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLeng
 const t0 = Date.now();
 const { entites, balance } = parseVerif(ab(verifBuf) as ArrayBuffer);
 const lignes = parseBrouillard(ab(brouBuf) as ArrayBuffer);
-console.log(`parseVerif: ${entites.length} entités ; balance: ${balance?.length ?? 0} comptes ; brouillard: ${lignes.length} lignes`);
+console.log(
+  `parseVerif: ${entites.length} entités ; balance: ${balance?.length ?? 0} comptes ; brouillard: ${lignes.length} lignes`,
+);
 const result = analyse(lignes, entites, balance);
 console.log(`analyse en ${Date.now() - t0} ms`);
 console.log(`stats: ${JSON.stringify(result.stats, null, 1)}`);
@@ -94,9 +96,12 @@ const num = (v: number, w = 16) =>
   v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(w);
 
 console.log("\n=== Écarts par entité (app) vs feuille 2 ===");
-console.log(`${pad("entité", 30)} | ${pad("appel", 16)} | ${pad("tréso", 16)} | ${pad("écart app", 16)} | ${pad("réf feuille", 16)} | ok?`);
+console.log(
+  `${pad("entité", 30)} | ${pad("appel", 16)} | ${pad("tréso", 16)} | ${pad("écart app", 16)} | ${pad("réf feuille", 16)} | ok?`,
+);
 const byNom = new Map(result.entites.map((e) => [e.nom, e]));
-let ok = 0, ko = 0;
+let ok = 0,
+  ko = 0;
 for (const [nom, ref] of Object.entries(REFERENCE)) {
   const e = byNom.get(nom);
   if (!e) {
@@ -105,7 +110,8 @@ for (const [nom, ref] of Object.entries(REFERENCE)) {
     continue;
   }
   const match = Math.abs(e.ecart - ref) < 1.0 || Math.abs(e.ecart - ref) < Math.abs(ref) * 0.000001;
-  if (match) ok++; else ko++;
+  if (match) ok++;
+  else ko++;
   console.log(
     `${pad(nom, 30)} | ${num(e.appelDeFonds)} | ${num(e.tresorerie)} | ${num(e.ecart)} | ${num(ref)} | ${match ? "OK" : "DIFF"}`,
   );
@@ -124,8 +130,7 @@ for (const [parent, enfantsAttendus] of Object.entries(FAMILLES)) {
   }
   const attendu = FAMILLE_ATTENDU[parent] ?? { ecart: 0, membres: enfantsAttendus.length + 1 };
   const membresOk =
-    f.membres.length === attendu.membres &&
-    enfantsAttendus.every((n) => f.membres.includes(n));
+    f.membres.length === attendu.membres && enfantsAttendus.every((n) => f.membres.includes(n));
   const tol = Math.max(0.011, Math.abs(attendu.ecart) * 0.000001);
   const ecartOk = Math.abs(f.ecart - attendu.ecart) < tol;
   const label = `${parent} [${f.membres.join(", ")}] = ${f.ecart.toFixed(2)} (attendu ${attendu.ecart})`;
@@ -139,7 +144,9 @@ for (const [parent, enfantsAttendus] of Object.entries(FAMILLES)) {
 const extras = result.familles.filter((f) => !FAMILLES[f.nom]);
 console.log(`OK: ${fOK.length}/${Object.keys(FAMILLES).length}`);
 for (const s of fOK) console.log("  ✓", s);
-console.log(`DIFF: ${fKO.length}${extras.length ? ` — familles inattendues: ${extras.map((f) => f.nom).join(", ")}` : ""}`);
+console.log(
+  `DIFF: ${fKO.length}${extras.length ? ` — familles inattendues: ${extras.map((f) => f.nom).join(", ")}` : ""}`,
+);
 for (const s of fKO) console.log("  ✗", s);
 
 // Statut famille porté sur les entités
@@ -161,53 +168,92 @@ for (const a of result.anomalies) parType[a.type] = (parType[a.type] ?? 0) + 1;
 console.log(parType);
 console.log("\nTop 12 anomalies :");
 for (const a of result.anomalies.slice(0, 12)) {
-  console.log(`  [${a.type}] ${a.entite} — ${a.libelle.slice(0, 50)} — ${a.montant.toFixed(2)} — ${a.detail.slice(0, 80)}`);
+  console.log(
+    `  [${a.type}] ${a.entite} — ${a.libelle.slice(0, 50)} — ${a.montant.toFixed(2)} — ${a.detail.slice(0, 80)}`,
+  );
 }
 
 // ============================================================
 // Écarts de famille réels : pièces concernées (à corriger dans Sage)
+// Règle RAN : seuls les RAN portant sur 401000 / 460 / 411 sont considérés ;
+// les RAN 462/467 (comptes d'attente), 512/513 et divers sont résumés à part
+// et le rapprochement Σ pièces + RAN non considérés = écart feuille est vérifié.
 // ============================================================
-console.log("\n=== Pièces composant les écarts de famille réels ===");
+console.log("\n=== Pièces composant les écarts de famille réels (règle RAN 401000/460/411) ===");
 const reelles = result.familles.filter((f) => !f.soldee);
 const soldees = result.familles.filter((f) => f.soldee);
 let pOK = 0;
 let pKO = 0;
 for (const f of reelles) {
   const somme = f.pieces.reduce((t, p) => t + p.net, 0);
-  const sommeOK = Math.abs(somme - f.ecart) < 0.02;
+  const rapproche = Math.abs(somme + f.ranNonConsidere - f.ecart) < 0.02;
   const tousNetNonNul = f.pieces.every((p) => Math.abs(p.net) >= 0.01);
   const triees = f.pieces.every(
     (p, i) => i === 0 || Math.abs(f.pieces[i - 1]!.net) >= Math.abs(p.net),
   );
-  if (sommeOK && tousNetNonNul && triees) pOK++;
+  // Aucune pièce RAN listée ne doit porter un net sur 462/467/512/513 :
+  // ses comptes de périmètre doivent tous être des comptes considérés
+  // (401000 / 460 / 411 — en pratique des 460xxx dans le périmètre famille).
+  const ranOk = f.pieces
+    .filter((p) => p.role === "a_nouveaux")
+    .every((p) => p.comptes.split(", ").every((c) => /^(401000|460|411)/.test(c)));
+  if (rapproche && tousNetNonNul && triees && ranOk) pOK++;
   else pKO++;
   const roles: Record<string, number> = {};
   for (const p of f.pieces) roles[p.role] = (roles[p.role] ?? 0) + 1;
   console.log(
-    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} | Σ=${somme.toFixed(2).padStart(13)} | ${sommeOK ? "Σ=écart ✓" : "Σ DIFF"}${tousNetNonNul ? "" : " | NET NUL !" }${triees ? "" : " | MAL TRIÉ"} | roles=${JSON.stringify(roles)}`,
+    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} | Σ=${somme.toFixed(2).padStart(13)} | RAN non cons.=${f.nbRanNonConsidere} (${f.ranNonConsidere.toFixed(2)}) | ${rapproche ? "Σ+RAN=écart ✓" : "RAPPROCHEMENT DIFF"}${tousNetNonNul ? "" : " | NET NUL !"}${triees ? "" : " | MAL TRIÉ"}${ranOk ? "" : " | RAN 462/467 LISTÉ !"} | roles=${JSON.stringify(roles)}`,
   );
-  for (const p of f.pieces.slice(0, 3)) {
+  for (const p of f.pieces.filter((p) => p.role === "a_nouveaux").slice(0, 3)) {
     console.log(
-      `    [${p.role}] ${p.date} ${p.journal.padEnd(6)} ${p.piece.padEnd(10)} net=${p.net.toFixed(2).padStart(14)}${p.anomalie ? " [anomalie]" : ""}${p.aussiDans ? ` [aussi ${p.aussiDans.join(",")}]` : ""} ${p.libelle.slice(0, 45)}`,
+      `    [${p.role}] ${p.date} ${p.journal.padEnd(6)} ${p.piece.padEnd(10)} net=${p.net.toFixed(2).padStart(14)} comptesTous=${p.comptesTous.slice(0, 60)}`,
     );
   }
 }
 for (const f of soldees) {
-  if (f.pieces.length !== 0) {
+  if (f.pieces.length !== 0 || f.nbRanNonConsidere !== 0 || f.ranNonConsidere !== 0) {
     pKO++;
-    console.log(`  ✗ ${f.nom} : famille soldée avec ${f.pieces.length} pièces (attendu 0)`);
+    console.log(
+      `  ✗ ${f.nom} : famille soldée avec ${f.pieces.length} pièces / ${f.nbRanNonConsidere} RAN non considérés (attendu 0)`,
+    );
   }
 }
-console.log(`Familles vérifiées: ${pOK} OK, ${pKO} KO (${reelles.length} réelles + ${soldees.length} soldées à pièces vides)`);
+console.log(
+  `Familles vérifiées: ${pOK} OK, ${pKO} KO (${reelles.length} réelles + ${soldees.length} soldées à pièces vides)`,
+);
+console.log(
+  `Stats.piecesAFixer = ${result.stats.piecesAFixer} (attendu ${reelles.reduce((t, f) => t + f.pieces.length, 0)})`,
+);
+
+// RAN de tiers hors familles (401000 / 460 / 411) — à considérer
+console.log("\n=== RAN de tiers (401000/460/411) hors familles réelles ===");
+const ranTiers = result.ranTiers;
+const ranTiersOk = ranTiers.every((p) => /^(401000|460|411)/.test(p.comptesTiers));
+const piece27 = ranTiers.find((p) => p.piece === "27");
+const piece27Ok = piece27 ? Math.abs(piece27.net - -172800) < 0.01 : false;
+console.log(
+  `stats.ranTiers = ${result.stats.ranTiers} | tous sur 401000/460/411 : ${ranTiersOk ? "OK" : "KO"} | pièce 27 (401000 -172 800) : ${piece27Ok ? "OK" : "ABSENTE/DIFF"}`,
+);
+for (const p of ranTiers.slice(0, 8)) {
+  console.log(
+    `    ${p.piece.padEnd(10)} ${p.date} net=${p.net.toFixed(2).padStart(14)} tiers=[${p.comptesTiers}]`,
+  );
+}
 
 // Référencement croisé : une pièce partagée entre deux familles réelles
-const partagees = reelles.flatMap((f) => f.pieces.filter((p) => p.aussiDans).map((p) => ({ f: f.nom, p })));
+const partagees = reelles.flatMap((f) =>
+  f.pieces.filter((p) => p.aussiDans).map((p) => ({ f: f.nom, p })),
+);
 console.log(`Pièces partagées entre familles réelles : ${partagees.length}`);
 for (const { f, p } of partagees.slice(0, 5)) {
-  console.log(`  ${f} ↔ ${p.aussiDans!.join(", ")} : ${p.journal} ${p.piece} ${p.date} net=${p.net.toFixed(2)}`);
+  console.log(
+    `  ${f} ↔ ${p.aussiDans!.join(", ")} : ${p.journal} ${p.piece} ${p.date} net=${p.net.toFixed(2)}`,
+  );
 }
 
 // Anomalies croisées avec les pièces d'écart
 const nbAnomalies = reelles.reduce((t, f) => t + f.pieces.filter((p) => p.anomalie).length, 0);
 console.log(`Pièces d'écart aussi signalées comme anomalies : ${nbAnomalies}`);
-console.log(`Stats.piecesAFixer = ${result.stats.piecesAFixer} (attendu ${reelles.reduce((t, f) => t + f.pieces.length, 0)})`);
+console.log(
+  `Stats.piecesAFixer = ${result.stats.piecesAFixer} (attendu ${reelles.reduce((t, f) => t + f.pieces.length, 0)})`,
+);

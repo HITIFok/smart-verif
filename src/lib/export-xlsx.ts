@@ -35,11 +35,16 @@ export function exportAnomalies(result: AnalysisResult) {
     "Solde trésorerie": f.tresorerie,
     "Vérification (écart)": f.ecart,
     Statut: f.soldee ? "Soldée" : "Écart à corriger",
+    "Pièces à corriger": f.pieces.length,
+    "RAN non considérés (462/467, 512/513, divers)": f.nbRanNonConsidere,
+    "Total RAN non considérés": f.ranNonConsidere,
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(familles), "Vérification familles");
 
   // Écarts de famille réels : les pièces qui composent chaque écart — les
-  // écritures qu'il faut corriger dans Sage pour solder la famille.
+  // écritures qu'il faut corriger dans Sage pour solder la famille. Règle
+  // RAN : seuls les à-nouveaux portant sur 401000, 460 ou 411 sont listés ;
+  // les RAN 462/467, 512/513 ou divers sont résumés sur « Vérification familles ».
   const piecesFamilles = result.familles
     .filter((f) => !f.soldee)
     .flatMap((f) =>
@@ -64,6 +69,19 @@ export function exportAnomalies(result: AnalysisResult) {
     XLSX.utils.json_to_sheet(piecesFamilles),
     "Pièces écarts familles",
   );
+
+  // À-nouveaux de tiers (401000 / 460 / 411) hors familles : les RAN de
+  // tiers à considérer, par opposition aux RAN 462/467 non considérés.
+  const ranTiers = result.ranTiers.map((p) => ({
+    Journal: p.journal,
+    "N° pièce": p.piece,
+    Date: p.date,
+    Libellé: p.libelle,
+    "Comptes de tiers (401000/460/411)": p.comptesTiers,
+    "Tous comptes": p.comptesTous,
+    "Mouvement net tiers": p.net,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ranTiers), "RAN tiers 401000-460-411");
 
   const anomalies = result.anomalies.map((a) => ({
     Type: LABELS[a.type] ?? a.type,
