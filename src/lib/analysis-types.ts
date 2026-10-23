@@ -61,6 +61,7 @@ export type PieceEcartRole =
   | "paiement_banque" // étape 3 : 401000 + tiers D / 512 C
   | "arrivee_fonds" // étape 4 : 512 D / 460 C
   | "annulation_paiement" // hors cycle : 512 D / 401000 + tiers C
+  | "frais_bancaires" // hors cycle : 627 (+ TVA 445600) D / 512 C — à la charge de MCI CARE
   | "autre"; // hors schéma du cycle
 
 export const PIECE_ROLE_LABELS: Record<PieceEcartRole, string> = {
@@ -71,6 +72,7 @@ export const PIECE_ROLE_LABELS: Record<PieceEcartRole, string> = {
   paiement_banque: "Paiement (banque)",
   arrivee_fonds: "Arrivée des fonds",
   annulation_paiement: "Annulation de paiement",
+  frais_bancaires: "Frais bancaires (charge MCI CARE)",
   autre: "Hors schéma",
 };
 

@@ -21,7 +21,12 @@ import type {
 import { PIECE_ROLE_LABELS } from "@/lib/analysis-types";
 import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
-import { CYCLE_CHAIN, SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT } from "@/lib/schema-ecritures";
+import {
+  CYCLE_CHAIN,
+  SCHEMA_ECRITURES,
+  SCHEMA_ANNULATION_PAIEMENT,
+  SCHEMA_FRAIS_BANCAIRES,
+} from "@/lib/schema-ecritures";
 import type { EtapeSchema } from "@/lib/schema-ecritures";
 import { BANQUES_SOCIETES } from "@/lib/banques-societes";
 import {
@@ -551,7 +556,8 @@ function SchemaEcritures() {
           compte tiers au Crédit) puis côté banque (401000 + compte tiers au Débit, 512 au Crédit).
           Lorsque les fonds sont arrivés en banque (512 au Débit, 460 au Crédit), le cycle est
           soldé. L'analyseur reconnaît ces écritures comme normales, ainsi que l'annulation de
-          paiement (512 au Débit, 401000 + compte tiers au Crédit).
+          paiement (512 au Débit, 401000 + compte tiers au Crédit) et les frais bancaires à la
+          charge de MCI CARE (627 + TVA 445600 au Débit, 512 au Crédit).
         </p>
         <div className="num mt-4 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
           {CYCLE_CHAIN.map((etape, i) => (
@@ -578,6 +584,23 @@ function SchemaEcritures() {
         </div>
         <div className="mt-4">
           <EtapeCard etape={SCHEMA_ANNULATION_PAIEMENT} />
+        </div>
+      </div>
+      <div className="mt-4">
+        <div className="panel p-5">
+          <p className="text-sm font-semibold">Frais bancaires à la charge de MCI CARE (627)</p>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Le compte 627 porte les frais bancaires à la charge de MCI CARE (ex. BOAHOL 627000 Débit
+            / 512110 Crédit, TVA 445600 en plus). Écritures normales, jamais signalées comme
+            anomalies. Quand la banque débitée est celle d'un client, MCI CARE la rembourse par
+            compte-à-compte : BOAMCI 580001 Débit / 512000 Crédit, puis BOAHOL 512110 Débit / 580001
+            Crédit — la proposition figure dans l'onglet « Comptes à comptes ». Sur une banque de
+            MCI CARE (BOAMCI 512000, BNITEM 512005, MVOMCI 513000), le frais est déjà chez MCI :
+            rien à faire.
+          </p>
+        </div>
+        <div className="mt-4">
+          <EtapeCard etape={SCHEMA_FRAIS_BANCAIRES} />
         </div>
       </div>
       <BanquesSocietes />

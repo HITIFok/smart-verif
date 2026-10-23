@@ -2,7 +2,12 @@ import type { EntryLine } from "./analysis-types";
 import { BANQUES_SOCIETES } from "./banques-societes";
 
 export type SchemaRole =
-  "appel_de_fonds" | "paiement_tiers" | "paiement_banque" | "arrivee_fonds" | "annulation_paiement";
+  | "appel_de_fonds"
+  | "paiement_tiers"
+  | "paiement_banque"
+  | "arrivee_fonds"
+  | "annulation_paiement"
+  | "frais_bancaires";
 
 /** Journaux bancaires par société (BNITEM 512005 — MCI CARE, MVOTEL 513140 — TELMA…). */
 const JOURNAUX_BANQUE = BANQUES_SOCIETES.map((b) => `${b.journal} ${b.compte} (${b.societe})`).join(
@@ -133,6 +138,37 @@ export const SCHEMA_ANNULATION_PAIEMENT: EtapeSchema = {
   ],
 };
 
+/**
+ * Frais bancaires à la charge de MCI CARE (compte 627 — Services bancaires et
+ * assimilés) : la banque prélève le frais directement sur un compte 512/513,
+ * avec sa TVA 445600. Écriture normale, jamais signalée comme anomalie.
+ * Quand la banque débitée est celle d'un CLIENT (ex. BOAHOL 512110), l'app
+ * propose le compte-à-compte de remboursement depuis la banque de MCI CARE.
+ */
+export const SCHEMA_FRAIS_BANCAIRES: EtapeSchema = {
+  etape: 6,
+  role: "frais_bancaires",
+  journal: "BANQUE",
+  titre: "Frais bancaires à la charge de MCI CARE",
+  lignes: [
+    {
+      compte: "627",
+      sens: "Débit",
+      note: "Services bancaires et assimilés — frais à la charge de MCI CARE",
+    },
+    {
+      compte: "445600",
+      sens: "Débit",
+      note: "TVA déductible sur le frais (optionnelle, ex. BOAHOL 627000 8 000 + 445600 1 600)",
+    },
+    {
+      compte: "512",
+      sens: "Crédit",
+      note: `Banque débitée par l'établissement (${JOURNAUX_BANQUE}) — si c'est la banque d'un client, remboursement par compte-à-compte depuis BOAMCI 512000`,
+    },
+  ],
+};
+
 const isBanque = (c: string) => c.startsWith("512") || c.startsWith("513");
 
 /** Ligne 401 : compte général 401… avec un compte tiers (401000 + tiers). */
@@ -172,6 +208,14 @@ export function matchPieceSchema(group: EntryLine[]): SchemaRole | null {
   // Annulation de paiement — BANQUE : 512 D / 401000 + compte tiers C
   if (debit.every((l) => isBanque(l.compte)) && credit.every(is401Tiers))
     return "annulation_paiement";
+
+  // Frais bancaires à la charge de MCI CARE — 627 (+ TVA 445600) D / 512 C,
+  // ou la régulation inverse 512 D / 627 (+ TVA) C (ex. REGULE TARIF ERRONE).
+  const coteFrais = (ls: EntryLine[]) =>
+    ls.every((l) => l.compte.startsWith("627") || l.compte === "445600") &&
+    ls.some((l) => l.compte.startsWith("627"));
+  if (coteFrais(debit) && credit.every((l) => isBanque(l.compte))) return "frais_bancaires";
+  if (debit.every((l) => isBanque(l.compte)) && coteFrais(credit)) return "frais_bancaires";
 
   return null;
 }

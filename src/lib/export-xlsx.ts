@@ -2,7 +2,11 @@ import * as XLSX from "xlsx";
 import type { AnalysisResult } from "./analysis-types";
 import { PIECE_ROLE_LABELS } from "./analysis-types";
 import { OPERATION_LABELS } from "./transfers";
-import { SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT } from "./schema-ecritures";
+import {
+  SCHEMA_ECRITURES,
+  SCHEMA_ANNULATION_PAIEMENT,
+  SCHEMA_FRAIS_BANCAIRES,
+} from "./schema-ecritures";
 import { BANQUES_SOCIETES } from "./banques-societes";
 import { decrireComptes, PLAN_COMPTABLE, PLAN_TIERS } from "./referentiel";
 
@@ -208,14 +212,15 @@ export function exportAnomalies(result: AnalysisResult) {
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tr), "Comptes à comptes 580001");
 
-  const schema = [...SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT].flatMap((e) =>
-    e.lignes.map((l) => ({
-      Journal: e.journal,
-      Étape: `${e.etape}. ${e.titre}`,
-      Sens: l.sens,
-      Compte: l.complement ? `${l.compte} ${l.complement}` : l.compte,
-      Rôle: l.note,
-    })),
+  const schema = [...SCHEMA_ECRITURES, SCHEMA_ANNULATION_PAIEMENT, SCHEMA_FRAIS_BANCAIRES].flatMap(
+    (e) =>
+      e.lignes.map((l) => ({
+        Journal: e.journal,
+        Étape: `${e.etape}. ${e.titre}`,
+        Sens: l.sens,
+        Compte: l.complement ? `${l.compte} ${l.complement}` : l.compte,
+        Rôle: l.note,
+      })),
   );
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(schema), "Schéma des écritures");
 

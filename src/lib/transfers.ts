@@ -1,8 +1,8 @@
 import type { EntryLine } from "./analysis-types";
 import { SHARED_BANK } from "./shared-bank";
-import { BANQUES_PAR_SOCIETE, BANQUES_PAR_SUFFIXE } from "./banques-societes";
+import { BANQUES_PAR_SOCIETE, BANQUES_PAR_SUFFIXE, BANQUES_SOCIETES } from "./banques-societes";
 
-export type OperationType = "appel_de_fonds" | "paiement" | "honoraires";
+export type OperationType = "appel_de_fonds" | "paiement" | "honoraires" | "frais_bancaires";
 export type TransferStatus = "a_creer" | "existe_deja" | "manuel";
 
 /** Libellés affichables des opérations détectées (UI + export Excel). */
@@ -10,6 +10,7 @@ export const OPERATION_LABELS: Record<OperationType, string> = {
   appel_de_fonds: "Arrivée des fonds",
   paiement: "Paiement",
   honoraires: "Honoraires / revenus MCI CARE",
+  frais_bancaires: "Frais bancaires (charge MCI CARE)",
 };
 
 export interface TransferLine {
@@ -64,9 +65,21 @@ export function detectTransfers(
   const bankAccounts = new Set(lignes.filter((l) => isBank(l.compte)).map((l) => l.compte));
   // Journal bancaire de chaque compte 512/513 présent dans le brouillard
   // (ex. 512000 → BOAMCI) : sert à nommer le journal de saisie du
-  // compte-à-compte de destination.
+  // compte-à-compte de destination. Le journal RAN (soldes d'ouverture) est
+  // écarté — le compte-à-compte se saisit dans le journal de la banque — et
+  // la cartographie explicite des banques de sociétés est prioritaire.
+  const compteJournals = new Map<string, Map<string, number>>();
+  for (const l of lignes) {
+    if (!isBank(l.compte) || l.journal === "RAN") continue;
+    const m = compteJournals.get(l.compte) ?? new Map<string, number>();
+    m.set(l.journal, (m.get(l.journal) ?? 0) + 1);
+    compteJournals.set(l.compte, m);
+  }
   const journalBanque = new Map<string, string>();
-  for (const l of lignes) if (isBank(l.compte)) journalBanque.set(l.compte, l.journal);
+  for (const [compte, m] of compteJournals)
+    journalBanque.set(compte, [...m.entries()].sort((a, b) => b[1] - a[1])[0]![0]);
+  for (const b of BANQUES_SOCIETES)
+    if (bankAccounts.has(b.compte)) journalBanque.set(b.compte, b.journal);
   // Banques « propres » d'un client : son 512 direct, un 512 partagé
   // (SHARED_BANK) ou sa banque Mobile Money 513 mappée (BANQUES_PAR_SUFFIXE :
   // MVOTEL 513140 pour TELMA, MVOHOL 513110 pour SANLAMALLIANZ COMPAGNIE).
@@ -309,6 +322,54 @@ export function detectTransfers(
       date: first.date,
       libelle: first.libelle,
     };
+
+    // Frais bancaires à la charge de MCI CARE (627 — Services bancaires et
+    // assimilés) : la banque prélève le frais, avec sa TVA 445600, directement
+    // sur un compte 512/513. Sur la banque d'un CLIENT (ex. BOAHOL 627000
+    // 8 000 + 445600 1 600 au Débit / 512110 9 600 au Crédit), MCI CARE doit
+    // rembourser par compte-à-compte depuis sa banque principale : BOAMCI
+    // 580001 Débit / 512000 Crédit, puis BOAHOL 512110 Débit / 580001 Crédit.
+    // Sur une banque de MCI CARE elle-même (BOAMCI 512000, BNITEM 512005,
+    // MVOMCI 513000) : rien à faire, le frais est déjà chez MCI CARE.
+    if (g.some((l) => l.compte.startsWith("627") && l.debit > 0)) {
+      const societe = bank ? societeDe(bank) : null;
+      const m = r2(g.filter((l) => isBank(l.compte)).reduce((s, l) => s + l.credit - l.debit, 0));
+      const comptesFrais = [
+        ...new Set(g.filter((l) => l.compte.startsWith("627")).map((l) => l.compte)),
+      ].join(", ");
+      if (bank && societe && societe !== "MCI CARE" && societe !== bank && m > 0 && honoDest) {
+        push(
+          {
+            ...base,
+            type: "frais_bancaires" as const,
+            entite: societe,
+            journalSource: journalBanque.get(honoDest) ?? "BANQUE",
+            journalDestination: first.journal,
+            compteTiers: comptesFrais,
+            banqueSource: honoDest,
+            banqueDestination: bank,
+            montant: m,
+          },
+          `Frais bancaires ${comptesFrais} débités sur ${bank} (${first.journal}) — à la charge de MCI CARE : compte-à-compte de remboursement depuis ${honoDest}`,
+        );
+      } else if (!bank) {
+        push(
+          {
+            ...base,
+            type: "frais_bancaires" as const,
+            entite: "?",
+            journalSource: honoDest ? (journalBanque.get(honoDest) ?? "BANQUE") : "?",
+            journalDestination: first.journal,
+            compteTiers: comptesFrais,
+            banqueSource: honoDest ?? "?",
+            banqueDestination: banks.join("/"),
+            montant: Math.abs(m),
+          },
+          "",
+          "Plusieurs comptes bancaires sur la pièce de frais",
+        );
+      }
+    }
 
     for (const l of g) {
       const p3 = l.compte.slice(0, 3);

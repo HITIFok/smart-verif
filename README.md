@@ -42,6 +42,15 @@ Le compte 401000 + compte tiers matérialise le paiement des prestataires ou cli
 
 Les écritures **401000 + compte tiers au Crédit / 512xxx au Débit** sont des **annulations de paiement** : la banque rend les fonds et le prestataire ou client est recrédité. Elles sont reconnues comme normales (rôle `annulation_paiement`) et ne sont jamais signalées comme anomalies ; le schéma complet figure dans l'onglet « Schéma des écritures » et dans l'export Excel.
 
+### Frais bancaires à la charge de MCI CARE (627)
+
+Le compte **627** (Services bancaires et assimilés) porte les **frais bancaires à la charge de MCI CARE** : la banque prélève le frais — avec sa TVA **445600** — directement sur un compte 512/513 (ex. `BOAHOL 627000 Débit + 445600 Débit / 512110 Crédit`). Ces écritures (et leur régulation inverse `512 Débit / 627 Crédit`) sont reconnues comme normales (rôle `frais_bancaires`) et ne sont jamais signalées comme anomalies.
+
+- **Frais débités sur la banque d'un client** (BOAHOL 512110 — HOLCIM, BOAJOV 512150 — JOVENA, BNISAN 512100 — SANLAMALLIANZ…) : le client a payé à la place de MCI CARE, l'application propose le **compte-à-compte de remboursement** depuis la banque principale de MCI CARE, du montant total débité à la banque (frais + TVA) :
+  > `BOAMCI 580001 Débit / 512000 Crédit` puis `BOAHOL 512110 Débit / 580001 Crédit`
+- **Frais débités sur une banque de MCI CARE** (BOAMCI 512000, BNITEM 512005, MVOMCI 513000 — Mobile Money) : rien à faire, le frais est déjà chez MCI CARE.
+- **Paiements de prestataires passés par MVOMCI** (401000 + compte tiers RMBT Débit / 513000 Crédit) : MCI CARE a payé avec son propre Mobile Money — c'est la **banque du client** (repérée via le compte tiers, ex. RMBT HOLCIM → 512110 de HOLCIM) qui doit faire le compte-à-compte vers la banque de MCI CARE, du montant du paiement. Déjà couvert par la détection « Paiement réglé par 513000 (MVOMCI) au lieu du compte client 512110 » de l'onglet « Comptes à comptes ».
+
 ### Honoraires et revenus MCI CARE (411, 606200)
 
 Les comptes **411** (honoraires) et **606200** (revenus) sont des revenus de MCI CARE. S'ils ne sont pas encaissés directement dans une banque de MCI CARE (BOAMCI 512000, BNITEM 512005), l'application propose le compte à compte 580001 :

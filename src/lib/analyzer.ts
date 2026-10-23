@@ -346,11 +346,18 @@ export function analyse(
 
       if (afSameClient.length === 0) {
         // Paiement prestataire / client côté banque (schéma du cycle appel de
-        // fonds : 401000 + compte tiers au Débit / 512 au Crédit) et annulation
-        // de paiement (512 au Débit / 401000 + compte tiers au Crédit) :
-        // écritures normales, pas des anomalies.
+        // fonds : 401000 + compte tiers au Débit / 512 au Crédit), annulation
+        // de paiement (512 au Débit / 401000 + compte tiers au Crédit) et
+        // frais bancaires à la charge de MCI CARE (627 + TVA 445600 au Débit /
+        // 512 au Crédit, ou la régulation inverse) : écritures normales, pas
+        // des anomalies.
         const role = matchPieceSchema(group);
-        if (role === "paiement_banque" || role === "annulation_paiement") continue;
+        if (
+          role === "paiement_banque" ||
+          role === "annulation_paiement" ||
+          role === "frais_bancaires"
+        )
+          continue;
         const contreparties = [
           ...new Set(group.filter((l) => !family(l.compte)).map((l) => l.compte)),
         ];
