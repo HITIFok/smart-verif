@@ -13,6 +13,16 @@ const LABELS: Record<string, string> = {
   ecart_balance: "Écart brouillard / balance",
 };
 
+/** Détail de la combinaison exacte détectée pour une famille : les écritures
+ *  erronées jointes par « + » avec leur montant, somme = écart. */
+function detailCombinaison(f: AnalysisResult["familles"][number]): string {
+  if (f.combinaisons.length === 0) return f.combinaisonEchec ? "(non trouvée)" : "";
+  return f.combinaisons
+    .slice(0, 3)
+    .map((c) => c.pieces.map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`).join(" + "))
+    .join("  |  ou  ");
+}
+
 export function exportAnomalies(result: AnalysisResult) {
   const wb = XLSX.utils.book_new();
 
@@ -38,6 +48,19 @@ export function exportAnomalies(result: AnalysisResult) {
     "Pièces à corriger": f.pieces.length,
     "RAN non considérés (462/467, 512/513, divers)": f.nbRanNonConsidere,
     "Total RAN non considérés": f.ranNonConsidere,
+    ...(f.soldee
+      ? {}
+      : {
+          "Écritures erronées détectées": detailCombinaison(f),
+          "Somme combinaison": f.combinaisons[0]?.somme ?? "",
+          Portée:
+            f.combinaisons.length === 0
+              ? ""
+              : f.combinaisons[0]!.portee === "feuille"
+                ? "Écart feuille"
+                : "Hors RAN non considérés",
+          Variantes: f.nbVariantesCombinaison || "",
+        }),
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(familles), "Vérification familles");
 
@@ -61,6 +84,7 @@ export function exportAnomalies(result: AnalysisResult) {
         "Tous comptes": p.comptesTous,
         "Mouvement net": p.net,
         Anomalie: p.anomalie ? "Oui" : "",
+        "Dans combinaison (écriture erronée)": p.dansCombinaison ? "Oui" : "",
         "Aussi dans": p.aussiDans?.join(", ") ?? "",
       })),
     );
@@ -69,6 +93,45 @@ export function exportAnomalies(result: AnalysisResult) {
     XLSX.utils.json_to_sheet(piecesFamilles),
     "Pièces écarts familles",
   );
+
+  // Combinaisons exactes d'écritures erronées : pour chaque famille non
+  // soldée, la(les) plus petite(s) combinaison(s) de pièces dont la somme
+  // redonne exactement l'écart (l'écart peut être composé de plusieurs
+  // écritures erronées, pas toujours d'une seule).
+  const combinaisons = result.familles
+    .filter((f) => !f.soldee)
+    .flatMap((f): Record<string, string | number>[] =>
+      f.combinaisons.length === 0
+        ? [
+            {
+              Famille: f.nom,
+              Membres: f.membres.join(" + "),
+              "Écart feuille": f.ecart,
+              "RAN non considérés": f.ranNonConsidere,
+              Portée: "",
+              Solution: "",
+              "Nb écritures": "",
+              Écritures: f.combinaisonEchec
+                ? "(aucune combinaison exacte trouvée, 1 à 4 écritures)"
+                : "",
+              Somme: "",
+            },
+          ]
+        : f.combinaisons.map((c, ci) => ({
+            Famille: f.nom,
+            Membres: f.membres.join(" + "),
+            "Écart feuille": f.ecart,
+            "RAN non considérés": f.ranNonConsidere,
+            Portée: c.portee === "feuille" ? "Écart feuille" : "Hors RAN non considérés",
+            Solution: `${ci + 1} / ${f.combinaisons.length}`,
+            "Nb écritures": String(c.pieces.length),
+            Écritures: c.pieces
+              .map((p) => `${p.journal} ${p.piece} du ${p.date} — ${p.net.toFixed(2)}`)
+              .join(" + "),
+            Somme: c.somme,
+          })),
+    );
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(combinaisons), "Combinaisons écarts");
 
   // À-nouveaux de tiers (401000 / 460 / 411) hors familles : les RAN de
   // tiers à considérer, par opposition aux RAN 462/467 non considérés.

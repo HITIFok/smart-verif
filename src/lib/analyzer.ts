@@ -10,6 +10,7 @@ import type {
   RanTiersPiece,
 } from "./analysis-types";
 import { detectTransfers } from "./transfers";
+import { resoudreEcartFamille } from "./ecarts";
 import { BANQUE_PROPRIETAIRE, SHARED_BANK } from "./shared-bank";
 import { matchPieceSchema } from "./schema-ecritures";
 import { avecLibelle } from "./referentiel";
@@ -571,6 +572,9 @@ export function analyse(
       pieces: [],
       ranNonConsidere: 0,
       nbRanNonConsidere: 0,
+      combinaisons: [],
+      nbVariantesCombinaison: 0,
+      combinaisonEchec: false,
     });
     parent.enfants = membres.map((m) => m.nom);
     for (const enfant of enfants) {
@@ -705,6 +709,17 @@ export function analyse(
       sf.f.pieces = list;
       sf.f.ranNonConsidere = sf.ranNonConsidere;
       sf.f.nbRanNonConsidere = sf.nbRanNonConsidere;
+
+      // Détection EXACTE des écritures erronées (feuille 2 du Verif BG) : la
+      // plus petite combinaison de pièces dont la somme redonne exactement
+      // l'écart. Un écart peut être composé de PLUSIEURS écritures erronées
+      // (ex. 90 000 = 48 000 + 2 000 + 40 000) comme d'une seule — les autres
+      // pièces listées se compensent entre elles et ne se corrigent pas.
+      const resolution = resoudreEcartFamille(list, sf.f.ecart, sf.ranNonConsidere);
+      sf.f.combinaisons = resolution.solutions;
+      sf.f.nbVariantesCombinaison = resolution.nbTotal;
+      sf.f.combinaisonEchec = resolution.echec;
+      // (les pièces des solutions sont marquées dansCombinaison par le solver)
     }
 
     // À-nouveaux de tiers hors familles : pièces RAN portant sur 401000, 460
@@ -753,6 +768,13 @@ export function analyse(
 
   const transferts = detectTransfers(lignes, suffixToNom);
 
+  const famillesNonSoldees = familles.filter((f) => !f.soldee);
+  const piecesErronees = new Set(
+    famillesNonSoldees.flatMap((f) =>
+      f.combinaisons.flatMap((c) => c.pieces.map((p) => `${p.journal}|${p.piece}|${p.date}`)),
+    ),
+  );
+
   return {
     entites,
     familles,
@@ -769,6 +791,11 @@ export function analyse(
       ecartTotal: round2(entites.reduce((t, e) => t + Math.abs(e.ecart), 0)),
       piecesAFixer: familles.filter((f) => !f.soldee).reduce((t, f) => t + f.pieces.length, 0),
       ranTiers: ranTiers.length,
+      famillesResolues: famillesNonSoldees.filter((f) => f.combinaisons.length > 0).length,
+      famillesNonResolues: famillesNonSoldees.filter(
+        (f) => f.combinaisons.length === 0 && f.combinaisonEchec,
+      ).length,
+      piecesErronees: piecesErronees.size,
       parType: {
         mauvais_client: anomalies.filter((a) => a.type === "mauvais_client").length,
         hors_perimetre: anomalies.filter((a) => a.type === "hors_perimetre").length,

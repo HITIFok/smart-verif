@@ -194,7 +194,7 @@ function Index() {
             icon={<ShieldCheck className="size-4" />}
             label="Contrôles soldés"
             value={`${result.stats.soldees} / ${result.stats.entites}`}
-            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) à corriger dans Sage · ${result.stats.ranTiers.toLocaleString("fr-FR")} RAN de tiers (401000/460/411)`}
+            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesErronees.toLocaleString("fr-FR")} écriture(s) erronée(s) détectée(s) · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) dans les écarts · ${result.stats.ranTiers.toLocaleString("fr-FR")} RAN de tiers (401000/460/411)`}
             tone="success"
           />
           <Stat
@@ -1037,6 +1037,13 @@ function EcartsFamilles({
           {totalRanNonConsideres.toLocaleString("fr-FR")} pièce(s) écartée(s), total affiché sur
           chaque famille pour le rapprochement avec l'écart de la feuille).
         </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Détection exacte des écritures erronées : pour chaque famille, l'application cherche la
+          plus petite combinaison de pièces dont la somme redonne exactement l'écart de la feuille —
+          un écart peut venir d'une seule écriture comme de plusieurs (ex. écart 90 000 = 48 000 + 2
+          000 + 40 000). Les écritures erronées détectées sont marquées « erronée » ; les autres
+          pièces listées se compensent entre elles et ne se corrigent pas.
+        </p>
       </div>
       {familles.map((f) => (
         <CarteFamilleEcart
@@ -1162,6 +1169,10 @@ function CarteFamilleEcart({
   // Rapprochement : Σ pièces à corriger + RAN non considérés (462/467,
   // 512/513, comptes divers) = écart de la feuille de vérification.
   const verifiee = Math.abs(somme + f.ranNonConsidere - f.ecart) < 0.02;
+  // Écritures erronées détectées : la combinaison exacte de l'écart.
+  const nbPiecesCombinaison = new Set(
+    f.combinaisons.flatMap((c) => c.pieces.map((p) => `${p.journal}|${p.piece}|${p.date}`)),
+  ).size;
   return (
     <div className="panel overflow-hidden">
       <button
@@ -1178,12 +1189,24 @@ function CarteFamilleEcart({
               <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
                 famille
               </span>
+              {f.combinaisons.length > 0 && (
+                <span className="ml-2 rounded bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-destructive">
+                  {nbPiecesCombinaison} écriture(s) erronée(s)
+                </span>
+              )}
+              {f.combinaisons.length === 0 && f.combinaisonEchec && (
+                <span className="ml-2 rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-foreground">
+                  combinaison non trouvée
+                </span>
+              )}
             </p>
             <p className="truncate text-xs text-muted-foreground">{f.membres.join(" + ")}</p>
           </div>
         </div>
         <span className="num self-center text-right text-xs text-muted-foreground">
-          {f.pieces.length.toLocaleString("fr-FR")} pièce(s) concernée(s)
+          {f.combinaisons.length > 0
+            ? `${nbPiecesCombinaison} erronée(s) sur ${f.pieces.length.toLocaleString("fr-FR")} pièce(s)`
+            : `${f.pieces.length.toLocaleString("fr-FR")} pièce(s) concernée(s)`}
         </span>
         <span
           className={`num self-center text-right font-bold ${f.ecart < 0 ? "text-destructive" : ""}`}
@@ -1200,11 +1223,77 @@ function CarteFamilleEcart({
       </button>
       {ouvert && (
         <div className="border-t border-border bg-secondary/30">
+          {f.combinaisons.length > 0 ? (
+            <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-destructive">
+                Écritures erronées détectées — combinaison exacte de l'écart
+              </p>
+              {f.combinaisons.map((c, ci) => (
+                <div key={ci} className="mt-2 rounded bg-card px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    {c.portee === "feuille"
+                      ? "La somme de ces écritures redonne exactement l'écart de la feuille de vérification : ce sont elles qu'il faut corriger dans Sage."
+                      : "Somme exacte de l'écart hors RAN non considérés (462/467, 512/513) : piste de correction dans Sage."}
+                  </p>
+                  <p className="num mt-1 text-sm font-semibold">
+                    {c.pieces.map((p, i) => (
+                      <span key={`${p.journal}|${p.piece}|${i}`}>
+                        {i > 0 && <span className="mx-1 text-muted-foreground">+</span>}
+                        <span className={p.net < 0 ? "text-destructive" : ""}>
+                          {p.journal} {p.piece || "—"} ({fmt(p.net)})
+                        </span>
+                      </span>
+                    ))}
+                    <span className="mx-1 text-muted-foreground">=</span>
+                    <span className={c.somme < 0 ? "text-destructive" : "text-success"}>
+                      {fmt(c.somme)}
+                    </span>
+                    <span
+                      className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                        c.portee === "feuille"
+                          ? "bg-success/15 text-success"
+                          : "bg-warning/20 text-accent-foreground"
+                      }`}
+                    >
+                      {c.portee === "feuille" ? "écart feuille" : "hors RAN non considérés"}
+                    </span>
+                  </p>
+                  <p className="num mt-1 text-[11px] text-muted-foreground">
+                    {c.pieces.map((p) => `${p.date} — ${p.libelle}`).join(" · ")}
+                  </p>
+                </div>
+              ))}
+              {f.nbVariantesCombinaison > f.combinaisons.length && (
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  {f.nbVariantesCombinaison.toLocaleString("fr-FR")} combinaison(s) équivalente(s)
+                  possible(s) à cette taille — présentées : celles avec le plus d'écritures
+                  suspectes.
+                </p>
+              )}
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Une fois ces écritures corrigées dans Sage, les autres pièces listées ci-dessous se
+                compensent entre elles : elles ne sont pas à corriger (sans erreur).
+              </p>
+            </div>
+          ) : f.combinaisonEchec ? (
+            <div className="mx-4 mt-3 rounded-md border border-warning/40 bg-warning/10 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-accent-foreground">
+                Aucune combinaison exacte trouvée
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Aucune combinaison de 1 à 4 écritures ne redonne exactement l'écart de{" "}
+                {fmt(f.ecart)}
+                (ni l'écart hors RAN non considérés). Les pièces listées ci-dessous restent les
+                contributeurs à examiner — l'écart provient probablement de plus de 4 écritures ou
+                d'écritures hors du périmètre listé.
+              </p>
+            </div>
+          ) : null}
           <p className="px-4 pt-3 text-xs text-muted-foreground">
             Pièces dont le mouvement net sur le périmètre de la famille ({f.membres.join(", ")})
-            n'est pas nul : ce sont ces écritures qu'il faut corriger dans Sage pour solder l'écart
-            de {fmt(f.ecart)}. Triées du plus gros contributeur au plus petit. Règle RAN : seuls les
-            à-nouveaux portant sur 401000, 460 ou 411 sont listés ici ; les{" "}
+            n'est pas nul. Les écritures erronées détectées (surlignées) forment la combinaison
+            exacte de l'écart de {fmt(f.ecart)} ; les autres se compensent entre elles. Règle RAN :
+            seuls les à-nouveaux portant sur 401000, 460 ou 411 sont listés ici ; les{" "}
             {f.nbRanNonConsidere.toLocaleString("fr-FR")} pièce(s) RAN 462/467, 512/513 ou divers
             (total {fmt(f.ranNonConsidere)}) ne sont pas des écritures à corriger et sont
             réintégrées pour rapprocher la somme : {fmt(somme)} + {fmt(f.ranNonConsidere)} ={" "}
@@ -1214,7 +1303,9 @@ function CarteFamilleEcart({
             {f.pieces.slice(0, limit).map((p, i) => (
               <div
                 key={`${p.journal}|${p.piece}|${p.date}|${i}`}
-                className="grid gap-2 px-4 py-2.5 md:grid-cols-[auto_1fr_auto]"
+                className={`grid gap-2 px-4 py-2.5 md:grid-cols-[auto_1fr_auto] ${
+                  p.dansCombinaison ? "border-l-2 border-destructive bg-destructive/5" : ""
+                }`}
               >
                 <span
                   className={`h-fit rounded px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${
@@ -1238,6 +1329,11 @@ function CarteFamilleEcart({
                     {p.anomalie && (
                       <span className="ml-2 rounded bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-destructive">
                         anomalie
+                      </span>
+                    )}
+                    {p.dansCombinaison && (
+                      <span className="ml-2 rounded bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">
+                        erronée
                       </span>
                     )}
                     {p.aussiDans && (

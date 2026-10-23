@@ -74,6 +74,27 @@ export const PIECE_ROLE_LABELS: Record<PieceEcartRole, string> = {
   autre: "Hors schéma",
 };
 
+/** Combinaison exacte d'écritures erronées expliquant un écart de famille :
+ *  la somme des nets de ces pièces redonne EXACTEMENT l'écart de la feuille 2
+ *  du Verif BG. Un écart peut être composé de PLUSIEURS écritures erronées et
+ *  pas toujours d'une seule — ex. écart 90 000 = 48 000 + 2 000 + 40 000 —
+ *  comme d'une seule écriture. C'est la(les) pièce(s) à corriger dans Sage
+ *  pour solder la famille : une fois ces écritures corrigées, les autres
+ *  mouvements se compensent entre eux et l'écart tombe à zéro. */
+export interface CombinaisonEcart {
+  /** Les écritures erronées de la combinaison (références à FamilleVerif.pieces). */
+  pieces: PieceEcart[];
+  /** Somme exacte des nets de la combinaison (Débit − Crédit), en Ariary. */
+  somme: number;
+  /** Cible visée par la combinaison (égal à somme, au centime). */
+  cible: number;
+  /** « feuille » : l'écart complet de la feuille de vérification — corriger
+   *  ces écritures ramène l'écart à zéro. « hors_ran » : l'écart moins les
+   *  RAN non considérés (462/467, 512/513, divers) — proposée quand aucune
+   *  combinaison n'explique l'écart complet. */
+  portee: "feuille" | "hors_ran";
+}
+
 /** Pièce du brouillard dont le mouvement net sur le périmètre d'une famille
  *  n'est pas nul : c'est une des pièces qui composent l'écart réel de la
  *  famille — celles qu'il faut corriger dans Sage pour la solder. */
@@ -93,6 +114,9 @@ export interface PieceEcart {
   anomalie: boolean;
   /** Autres familles réelles dont cette pièce fait aussi l'écart (mauvais client). */
   aussiDans?: string[];
+  /** La pièce fait partie de la combinaison exacte détectée : c'est une des
+   *  écritures erronées qui composent l'écart (à corriger en priorité). */
+  dansCombinaison?: boolean;
 }
 
 /** À-nouveau du journal RAN portant sur un compte de tiers réel (401000,
@@ -139,6 +163,15 @@ export interface FamilleVerif {
   ranNonConsidere: number;
   /** Nombre de pièces RAN non considérées pour cette famille. */
   nbRanNonConsidere: number;
+  /** Détection exacte : la(les) plus petite(s) combinaison(s) d'écritures
+   *  erronées dont la somme redonne l'écart (1 à 4 écritures). Un écart peut
+   *  venir de plusieurs écritures erronées, pas toujours d'une seule. */
+  combinaisons: CombinaisonEcart[];
+  /** Nombre de variantes distinctes trouvées à la taille minimale (au-delà
+   *  des combinaisons retenues). */
+  nbVariantesCombinaison: number;
+  /** Aucune combinaison exacte trouvée (recherche bornée à 4 écritures). */
+  combinaisonEchec: boolean;
 }
 
 export interface AnalysisResult {
@@ -163,6 +196,13 @@ export interface AnalysisResult {
     piecesAFixer: number;
     /** Nombre d'à-nouveaux de tiers (401000/460/411) hors périmètre familles. */
     ranTiers: number;
+    /** Familles non soldées dont la combinaison exacte d'écritures erronées
+     *  est détectée (la somme de la combinaison = l'écart). */
+    famillesResolues: number;
+    /** Familles non soldées sans combinaison exacte trouvée. */
+    famillesNonResolues: number;
+    /** Écritures erronées identifiées dans les combinaisons détectées. */
+    piecesErronees: number;
     ecartTotal: number;
     parType: Record<AnomalyType, number>;
   };

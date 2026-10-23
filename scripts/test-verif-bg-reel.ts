@@ -257,3 +257,81 @@ console.log(`Pièces d'écart aussi signalées comme anomalies : ${nbAnomalies}`
 console.log(
   `Stats.piecesAFixer = ${result.stats.piecesAFixer} (attendu ${reelles.reduce((t, f) => t + f.pieces.length, 0)})`,
 );
+
+// ============================================================
+// Combinaisons exactes d'écritures erronées (feuille 2 du Verif BG) :
+// l'écart peut être composé de PLUSIEURS écritures erronées (ex.
+// 90 000 = 48 000 + 2 000 + 40 000) comme d'une seule. L'app détecte la
+// plus petite combinaison de pièces dont la somme redonne exactement
+// l'écart, au centime, et la pièce de référence TOM (90 000) est vérifiée.
+// ============================================================
+console.log("\n=== Combinaisons exactes d'écritures erronées par famille ===");
+let cOK = 0;
+let cKO = 0;
+for (const f of reelles) {
+  if (f.combinaisons.length === 0) {
+    // Échec honnête accepté (écart composé de plus de 4 écritures) : aucune
+    // combinaison annoncée, donc aucune somme fausse.
+    if (f.combinaisonEchec && f.nbVariantesCombinaison === 0) cOK++;
+    else cKO++;
+    console.log(
+      `  ${f.nom.padEnd(22)} : aucune combinaison (echec=${f.combinaisonEchec}) ${cOK && !cKO ? "✓" : ""}`,
+    );
+    continue;
+  }
+  let ok = true;
+  for (const c of f.combinaisons) {
+    // Exactitude au centime : Σ des nets de la combinaison = cible annoncée.
+    const sommeCents = Math.round(c.pieces.reduce((t, p) => t + p.net, 0) * 100);
+    if (sommeCents !== Math.round(c.cible * 100) || sommeCents !== Math.round(c.somme * 100))
+      ok = false;
+    // Les pièces de la combinaison sont marquées erronées et appartiennent à la famille.
+    if (!c.pieces.every((p) => p.dansCombinaison && f.pieces.includes(p))) ok = false;
+    // Portée cohérente : « feuille » vise l'écart complet, « hors_ran » l'écart
+    // diminué des RAN non considérés.
+    const cibleAttendue =
+      c.portee === "feuille" ? f.ecart : Math.round((f.ecart - f.ranNonConsidere) * 100) / 100;
+    if (Math.abs(c.cible - cibleAttendue) > 0.005) ok = false;
+  }
+  if (ok) cOK++;
+  else cKO++;
+  const c = f.combinaisons[0]!;
+  console.log(
+    `  ${f.nom.padEnd(22)} : ${c.pieces.length} écriture(s) [${c.portee}] ${c.pieces
+      .map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`)
+      .join(" + ")} = ${c.somme.toFixed(2)} ✓${f.nbVariantesCombinaison > f.combinaisons.length ? ` (${f.nbVariantesCombinaison} variantes)` : ""}`,
+  );
+}
+console.log(`Combinaisons : ${cOK} OK, ${cKO} KO sur ${reelles.length} familles réelles`);
+
+// Cas de référence du comptable : l'écart 90 000 de la famille TOM.
+const tom = reelles.find((f) => f.nom === "TOM");
+const tomOk =
+  tom !== undefined &&
+  tom.combinaisons.length >= 1 &&
+  tom.combinaisons[0]!.portee === "feuille" &&
+  tom.combinaisons[0]!.pieces.length === 1 &&
+  Math.round(tom.combinaisons[0]!.pieces[0]!.net * 100) === 9000000;
+console.log(`TOM 90 000 : combinaison exacte ${tomOk ? "OK" : "KO"} (${tom?.combinaisons[0]?.pieces.map((p) => `${p.journal} ${p.piece} ${p.net}`).join(" + ") ?? "aucune"})`);
+
+// AITS : l'écart feuille 0,40 est composé de DEUX écritures (0,32 + 0,08).
+const aits = reelles.find((f) => f.nom === "AITS");
+const aitsOk =
+  aits !== undefined &&
+  aits.combinaisons.length >= 1 &&
+  aits.combinaisons[0]!.portee === "feuille" &&
+  aits.combinaisons[0]!.pieces.length === 2 &&
+  Math.round(aits.combinaisons[0]!.somme * 100) === 40;
+console.log(`AITS 0,40 : combinaison de 2 écritures ${aitsOk ? "OK" : "KO"} (${aits?.combinaisons[0]?.pieces.map((p) => p.net.toFixed(2)).join(" + ") ?? "aucune"})`);
+
+// Cohérence des stats de combinaisons
+const marquees = new Set(
+  reelles.flatMap((f) => f.pieces.filter((p) => p.dansCombinaison).map((p) => `${p.journal}|${p.piece}|${p.date}`)),
+).size;
+const statsCombOk =
+  result.stats.famillesResolues === reelles.filter((f) => f.combinaisons.length > 0).length &&
+  result.stats.famillesResolues + result.stats.famillesNonResolues === reelles.length &&
+  result.stats.piecesErronees === marquees;
+console.log(
+  `Stats combinaisons : famillesResolues=${result.stats.famillesResolues} + nonResolues=${result.stats.famillesNonResolues} = ${reelles.length} | piecesErronees=${result.stats.piecesErronees} (marquées ${marquees}) : ${statsCombOk ? "OK" : "KO"}`,
+);
