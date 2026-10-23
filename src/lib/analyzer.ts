@@ -593,8 +593,11 @@ export function analyse(
   // Écarts de famille réels (familles non soldées) : les pièces du brouillard
   // qui les composent. C'est la vérification demandée par le comptable — la
   // somme des mouvements nets de ces pièces sur le périmètre de la famille
-  // redonne exactement l'écart de la feuille de vérification, et ce sont ces
-  // écritures qu'il faut corriger dans Sage pour solder la famille.
+  // redonne exactement l'écart de la feuille de vérification. Quand UNE seule
+  // décomposition exacte existe, ce sont les écritures fautives ; quand
+  // PLUSIEURS décompositions coexistent (variantes alternatives), l'attribution
+  // est ambiguë : les pièces citées ne sont que des candidats à rapprocher
+  // dans Sage, pas des écritures prouvées erronées.
   const famillesReelles = familles.filter((f) => !f.soldee);
   if (famillesReelles.length) {
     const cleAnomalies = new Set(
@@ -789,10 +792,20 @@ export function analyse(
   const transferts = detectTransfers(lignes, suffixToNom);
 
   const famillesNonSoldees = familles.filter((f) => !f.soldee);
+  const cleCombinaison = (p: { journal?: string; piece?: string; date?: string }) =>
+    `${p.journal}|${p.piece}|${p.date}`;
+  // Écritures désignées par une décomposition UNIQUE (attribution certaine).
   const piecesErronees = new Set(
-    famillesNonSoldees.flatMap((f) =>
-      f.combinaisons.flatMap((c) => c.pieces.map((p) => `${p.journal}|${p.piece}|${p.date}`)),
-    ),
+    famillesNonSoldees
+      .filter((f) => f.nbVariantesCombinaison <= 1)
+      .flatMap((f) => f.combinaisons.flatMap((c) => c.pieces.map(cleCombinaison))),
+  );
+  // Écritures candidates d'une décomposition AMBIGUÏE (plusieurs décompositions
+  // exactes coexistent — aucune ne peut être accusée avec certitude).
+  const piecesAmbigues = new Set(
+    famillesNonSoldees
+      .filter((f) => f.nbVariantesCombinaison > 1)
+      .flatMap((f) => f.combinaisons.flatMap((c) => c.pieces.map(cleCombinaison))),
   );
 
   return {
@@ -816,6 +829,7 @@ export function analyse(
         (f) => f.combinaisons.length === 0 && f.combinaisonEchec,
       ).length,
       piecesErronees: piecesErronees.size,
+      piecesAmbigues: piecesAmbigues.size,
       parType: {
         mauvais_client: anomalies.filter((a) => a.type === "mauvais_client").length,
         hors_perimetre: anomalies.filter((a) => a.type === "hors_perimetre").length,

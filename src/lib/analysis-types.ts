@@ -216,8 +216,13 @@ export interface AnalysisResult {
     famillesResolues: number;
     /** Familles non soldées sans combinaison exacte trouvée. */
     famillesNonResolues: number;
-    /** Écritures erronées identifiées dans les combinaisons détectées. */
+    /** Écritures erronées identifiées dans les combinaisons UNIQUES (une seule
+     *  décomposition exacte : attribution certaine). */
     piecesErronees: number;
+    /** Écritures candidates dans les combinaisons AMBIGUÏS (plusieurs
+     *  décompositions exactes coexistent : aucune ne peut être désignée
+     *  avec certitude, à rapprocher dans Sage avant correction). */
+    piecesAmbigues: number;
     ecartTotal: number;
     parType: Record<AnomalyType, number>;
   };

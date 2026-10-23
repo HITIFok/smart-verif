@@ -364,16 +364,27 @@ console.log(
   `AITS 0,40 : combinaison de 2 écritures ${aitsOk ? "OK" : "KO"} (${aits?.combinaisons[0]?.pieces.map((p) => p.net.toFixed(2)).join(" + ") ?? "aucune"})`,
 );
 
-// Cohérence des stats de combinaisons
+// Cohérence des stats de combinaisons. piecesErronees compte les écritures
+// d'attribution CERTAINE (décomposition unique) ; piecesAmbigues celles des
+// familles à plusieurs décompositions exactes (candidates, pas des fautes
+// prouvées). Erronées + candidates = pièces marquées dansCombinaison.
 const marquees = new Set(
   reelles.flatMap((f) =>
     f.pieces.filter((p) => p.dansCombinaison).map((p) => `${p.journal}|${p.piece}|${p.date}`),
   ),
 ).size;
+const ambigues = new Set(
+  reelles
+    .filter((f) => f.nbVariantesCombinaison > 1)
+    .flatMap((f) =>
+      f.pieces.filter((p) => p.dansCombinaison).map((p) => `${p.journal}|${p.piece}|${p.date}`),
+    ),
+).size;
 const statsCombOk =
   result.stats.famillesResolues === reelles.filter((f) => f.combinaisons.length > 0).length &&
   result.stats.famillesResolues + result.stats.famillesNonResolues === reelles.length &&
-  result.stats.piecesErronees === marquees;
+  result.stats.piecesErronees === marquees - ambigues &&
+  result.stats.piecesAmbigues === ambigues;
 console.log(
-  `Stats combinaisons : famillesResolues=${result.stats.famillesResolues} + nonResolues=${result.stats.famillesNonResolues} = ${reelles.length} | piecesErronees=${result.stats.piecesErronees} (marquées ${marquees}) : ${statsCombOk ? "OK" : "KO"}`,
+  `Stats combinaisons : famillesResolues=${result.stats.famillesResolues} + nonResolues=${result.stats.famillesNonResolues} = ${reelles.length} | piecesErronees=${result.stats.piecesErronees} + piecesAmbigues=${result.stats.piecesAmbigues} (marquées ${marquees}) : ${statsCombOk ? "OK" : "KO"}`,
 );

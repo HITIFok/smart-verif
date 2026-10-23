@@ -199,7 +199,7 @@ function Index() {
             icon={<ShieldCheck className="size-4" />}
             label="Contrôles soldés"
             value={`${result.stats.soldees} / ${result.stats.entites}`}
-            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesErronees.toLocaleString("fr-FR")} écriture(s) erronée(s) détectée(s) · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) dans les écarts · ${result.stats.ranTiers.toLocaleString("fr-FR")} RAN de tiers (401000/460/411)`}
+            sub={`${result.stats.famillesSoldees} / ${result.stats.familles} familles soldées · ${result.stats.piecesErronees.toLocaleString("fr-FR")} écriture(s) erronée(s) · ${result.stats.piecesAmbigues.toLocaleString("fr-FR")} candidate(s) (attribution ambiguë) · ${result.stats.piecesAFixer.toLocaleString("fr-FR")} pièce(s) dans les écarts · ${result.stats.ranTiers.toLocaleString("fr-FR")} RAN de tiers (401000/460/411)`}
             tone="success"
           />
           <Stat
@@ -1075,8 +1075,10 @@ function EcartsFamilles({
             soldées seulement, recherche de la plus petite combinaison (1 à 4) dont la somme redonne
             exactement l'écart — un écart peut venir de plusieurs écritures (ex. 90 000 = 48 000 + 2
             000 + 40 000). Au plus une combinaison est retenue (la plus plausible : écritures
-            suspectes d'abord, masse la plus faible) et seules ses écritures sont marquées « erronée
-            » — les variantes équivalentes existantes sont comptées, à confirmer dans Sage.
+            suspectes d'abord, masse la plus faible). Si UNE seule décomposition exacte existe, ses
+            écritures sont marquées « erronée » ; si PLUSIEURS décompositions coexistent,
+            l'attribution est ambiguë : les pièces citées sont des « candidates » à rapprocher dans
+            Sage avec leurs contreparties, pas des fautes prouvées.
           </li>
           <li>
             <span className="font-semibold">Sans combinaison exacte</span> : l'écart est le résidu
@@ -1218,10 +1220,14 @@ function CarteFamilleEcart({
   const nbNonSoldees = f.pieces.filter((p) => !p.lettree).length;
   const nbSoldees = f.pieces.length - nbNonSoldees;
   const sommeNonSoldees = f.pieces.filter((p) => !p.lettree).reduce((t, p) => t + p.net, 0);
-  // Écritures erronées détectées : LA combinaison exacte retenue (au plus
-  // une — les variantes équivalentes sont alternatives, pas cumulatives).
+  // Décomposition de l'écart : LA combinaison exacte retenue (au plus une).
+  // Quand PLUSIEURS décompositions exactes coexistent (nbVariantes > 1),
+  // l'attribution est AMBIGUÏE : les pièces citées sont des candidats à
+  // rapprocher dans Sage, pas des écritures prouvées erronées — un comptable
+  // ne désigne pas de coupables quand plusieurs explications tombent juste.
   const solution = f.combinaisons[0];
   const nbPiecesCombinaison = solution?.pieces.length ?? 0;
+  const ambigue = (f.nbVariantesCombinaison ?? 0) > 1;
   const visibles = masquerSoldees ? f.pieces.filter((p) => !p.lettree) : f.pieces;
   return (
     <div className="panel overflow-hidden">
@@ -1239,9 +1245,15 @@ function CarteFamilleEcart({
               <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
                 famille
               </span>
-              {solution && (
+              {solution && !ambigue && (
                 <span className="ml-2 rounded bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-destructive">
                   {nbPiecesCombinaison} écriture(s) erronée(s)
+                </span>
+              )}
+              {solution && ambigue && (
+                <span className="ml-2 rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-foreground">
+                  {nbPiecesCombinaison} candidate(s) —{" "}
+                  {f.nbVariantesCombinaison.toLocaleString("fr-FR")} décompositions possibles
                 </span>
               )}
               {!solution && f.combinaisonEchec && nbNonSoldees > 0 && (
@@ -1255,7 +1267,7 @@ function CarteFamilleEcart({
         </div>
         <span className="num self-center text-right text-xs text-muted-foreground">
           {solution
-            ? `${nbPiecesCombinaison} erronée(s) · ${nbSoldees.toLocaleString("fr-FR")} soldée(s)`
+            ? `${nbPiecesCombinaison} ${ambigue ? "candidate(s)" : "erronée(s)"} · ${nbSoldees.toLocaleString("fr-FR")} soldée(s)`
             : `${nbNonSoldees.toLocaleString("fr-FR")} non soldée(s) · ${nbSoldees.toLocaleString("fr-FR")} soldée(s)`}
         </span>
         <span
@@ -1274,15 +1286,29 @@ function CarteFamilleEcart({
       {ouvert && (
         <div className="border-t border-border bg-secondary/30">
           {solution ? (
-            <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-destructive">
-                Écritures erronées détectées — combinaison exacte de l'écart
+            <div
+              className={`mx-4 mt-3 rounded-md border p-3 ${
+                ambigue
+                  ? "border-warning/40 bg-warning/10"
+                  : "border-destructive/30 bg-destructive/5"
+              }`}
+            >
+              <p
+                className={`text-xs font-bold uppercase tracking-wide ${
+                  ambigue ? "text-accent-foreground" : "text-destructive"
+                }`}
+              >
+                {ambigue
+                  ? `Écart exact — attribution ambiguë (${f.nbVariantesCombinaison.toLocaleString("fr-FR")} décompositions possibles)`
+                  : "Écritures erronées détectées — combinaison exacte de l'écart"}
               </p>
               <div className="mt-2 rounded bg-card px-3 py-2">
                 <p className="text-[11px] text-muted-foreground">
-                  {solution.portee === "feuille"
-                    ? "La somme de ces écritures redonne exactement l'écart de la feuille de vérification : ce sont elles qu'il faut corriger dans Sage."
-                    : "Somme exacte de l'écart hors RAN non considérés (462/467, 512/513) : piste de correction dans Sage."}
+                  {ambigue
+                    ? `La somme de ces écritures redonne exactement l'écart, MAIS ${f.nbVariantesCombinaison.toLocaleString("fr-FR")} décompositions différentes sont tout aussi exactes : aucune ne peut être désignée avec certitude. Ces pièces sont des candidates à rapprocher dans Sage (avec leurs contreparties 467/factures) — l'écart peut aussi venir d'ailleurs (à-nouveaux RAN, frais bancaires, transferts entre comptes).`
+                    : solution.portee === "feuille"
+                      ? "La somme de ces écritures redonne exactement l'écart de la feuille de vérification : ce sont elles qu'il faut corriger dans Sage."
+                      : "Somme exacte de l'écart hors RAN non considérés (462/467, 512/513) : piste de correction dans Sage."}
                 </p>
                 <p className="num mt-1 text-sm font-semibold">
                   {solution.pieces.map((p, i) => (
@@ -1315,8 +1341,8 @@ function CarteFamilleEcart({
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   {f.nbVariantesCombinaison.toLocaleString("fr-FR")} combinaisons de cette taille
                   sont exactes — elles sont alternatives (pas cumulatives) : la plus plausible est
-                  présentée (écritures suspectes d'abord, masse la plus faible). À confirmer dans
-                  Sage avant correction.
+                  présentée (écritures suspectes d'abord, masse la plus faible). Rapprochez chaque
+                  candidate avec sa contrepartie dans Sage avant toute correction.
                 </p>
               )}
               <p className="mt-2 text-[11px] text-muted-foreground">
@@ -1369,7 +1395,9 @@ function CarteFamilleEcart({
                 key={`${p.journal}|${p.piece}|${p.date}|${i}`}
                 className={`grid gap-2 px-4 py-2.5 md:grid-cols-[auto_1fr_auto] ${
                   p.dansCombinaison
-                    ? "border-l-2 border-destructive bg-destructive/5"
+                    ? ambigue
+                      ? "border-l-2 border-warning bg-warning/10"
+                      : "border-l-2 border-destructive bg-destructive/5"
                     : p.lettree
                       ? "border-l-2 border-transparent opacity-60"
                       : ""
@@ -1400,8 +1428,17 @@ function CarteFamilleEcart({
                       </span>
                     )}
                     {p.dansCombinaison && (
-                      <span className="ml-2 rounded bg-destructive px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">
-                        erronée
+                      <span
+                        className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white ${
+                          ambigue ? "bg-warning text-accent-foreground" : "bg-destructive"
+                        }`}
+                        title={
+                          ambigue
+                            ? "Candidate : plusieurs décompositions exactes de l'écart coexistent — à rapprocher dans Sage, attribution non certaine."
+                            : "Écriture erronée : la somme de la combinaison redonne exactement l'écart."
+                        }
+                      >
+                        {ambigue ? "candidate" : "erronée"}
                       </span>
                     )}
                     {p.lettree && (

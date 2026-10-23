@@ -18,14 +18,20 @@ const LABELS: Record<string, string> = {
 };
 
 /** Détail de LA combinaison exacte retenue pour une famille : les écritures
- *  erronées jointes par « + » avec leur montant, somme = écart. */
+ *  jointes par « + » avec leur montant, somme = écart. Si plusieurs
+ *  décompositions exactes coexistent (variantes), l'attribution est ambiguë :
+ *  les pièces sont des candidates, pas des écritures prouvées erronées. */
 function detailCombinaison(f: AnalysisResult["familles"][number]): string {
   if (f.combinaisons.length === 0)
     return f.combinaisonEchec
       ? `(résidu des écritures non soldées — lettrage : ${f.pieces.filter((p) => !p.lettree).length} non soldée(s) / ${f.pieces.filter((p) => p.lettree).length} soldée(s))`
       : "";
   const c = f.combinaisons[0]!;
-  return c.pieces.map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`).join(" + ");
+  const pieces = c.pieces.map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`).join(" + ");
+  const ambigue = (f.nbVariantesCombinaison ?? 0) > 1;
+  return ambigue
+    ? `[attribution ambiguë — ${f.nbVariantesCombinaison} décompositions exactes possibles, candidates à rapprocher dans Sage] ${pieces}`
+    : pieces;
 }
 
 export function exportAnomalies(result: AnalysisResult) {
@@ -57,7 +63,7 @@ export function exportAnomalies(result: AnalysisResult) {
     ...(f.soldee
       ? {}
       : {
-          "Écritures erronées détectées": detailCombinaison(f),
+          "Écritures désignées (combinaison = écart)": detailCombinaison(f),
           "Somme combinaison": f.combinaisons[0]?.somme ?? "",
           Portée:
             f.combinaisons.length === 0
@@ -93,7 +99,7 @@ export function exportAnomalies(result: AnalysisResult) {
         "Mouvement net": p.net,
         Anomalie: p.anomalie ? "Oui" : "",
         "Soldée (lettrage)": p.lettree ? "Oui" : "",
-        "Dans combinaison (écriture erronée)": p.dansCombinaison ? "Oui" : "",
+        "Dans combinaison (candidate si ambigu)": p.dansCombinaison ? "Oui" : "",
         "Aussi dans": p.aussiDans?.join(", ") ?? "",
       })),
     );
