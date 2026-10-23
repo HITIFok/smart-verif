@@ -710,16 +710,29 @@ export function analyse(
       sf.f.ranNonConsidere = sf.ranNonConsidere;
       sf.f.nbRanNonConsidere = sf.nbRanNonConsidere;
 
-      // Détection EXACTE des écritures erronées (feuille 2 du Verif BG) : la
-      // plus petite combinaison de pièces dont la somme redonne exactement
-      // l'écart. Un écart peut être composé de PLUSIEURS écritures erronées
-      // (ex. 90 000 = 48 000 + 2 000 + 40 000) comme d'une seule — les autres
-      // pièces listées se compensent entre elles et ne se corrigent pas.
+      // Détection EXACTE des écritures erronées (feuille 2 du Verif BG),
+      // méthode du comptable : lettrage par montants exactement opposés
+      // (les pièces soldées se compensent et ne sont jamais candidates),
+      // puis plus petite combinaison (1 à 4 écritures) parmi les NON soldées
+      // dont la somme redonne exactement l'écart — un écart peut être composé
+      // de PLUSIEURS écritures erronées (ex. 90 000 = 48 000 + 2 000 + 40 000).
+      // Au plus UNE solution retenue (les variantes « exactes » sont
+      // alternatives : les marquer toutes erronées serait faux) ; sans
+      // combinaison, l'écart est déclaré résidu des écritures non soldées.
       const resolution = resoudreEcartFamille(list, sf.f.ecart, sf.ranNonConsidere);
       sf.f.combinaisons = resolution.solutions;
       sf.f.nbVariantesCombinaison = resolution.nbTotal;
       sf.f.combinaisonEchec = resolution.echec;
-      // (les pièces des solutions sont marquées dansCombinaison par le solver)
+      // (la solution retenue marque ses pièces dansCombinaison, le lettrage
+      // marque les pièces soldées lettree — dans les deux cas sur la liste)
+      // Tri « comme un comptable » : les écritures non soldées (contributeurs
+      // de l'écart, à examiner) d'abord, les écritures soldées par lettrage
+      // ensuite — |net| décroissant dans chaque groupe.
+      list.sort(
+        (a, b) =>
+          Number(a.lettree ?? false) - Number(b.lettree ?? false) ||
+          Math.abs(b.net) - Math.abs(a.net),
+      );
     }
 
     // À-nouveaux de tiers hors familles : pièces RAN portant sur 401000, 460

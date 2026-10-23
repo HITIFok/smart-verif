@@ -13,14 +13,15 @@ const LABELS: Record<string, string> = {
   ecart_balance: "Écart brouillard / balance",
 };
 
-/** Détail de la combinaison exacte détectée pour une famille : les écritures
+/** Détail de LA combinaison exacte retenue pour une famille : les écritures
  *  erronées jointes par « + » avec leur montant, somme = écart. */
 function detailCombinaison(f: AnalysisResult["familles"][number]): string {
-  if (f.combinaisons.length === 0) return f.combinaisonEchec ? "(non trouvée)" : "";
-  return f.combinaisons
-    .slice(0, 3)
-    .map((c) => c.pieces.map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`).join(" + "))
-    .join("  |  ou  ");
+  if (f.combinaisons.length === 0)
+    return f.combinaisonEchec
+      ? `(résidu des écritures non soldées — lettrage : ${f.pieces.filter((p) => !p.lettree).length} non soldée(s) / ${f.pieces.filter((p) => p.lettree).length} soldée(s))`
+      : "";
+  const c = f.combinaisons[0]!;
+  return c.pieces.map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`).join(" + ");
 }
 
 export function exportAnomalies(result: AnalysisResult) {
@@ -45,7 +46,8 @@ export function exportAnomalies(result: AnalysisResult) {
     "Solde trésorerie": f.tresorerie,
     "Vérification (écart)": f.ecart,
     Statut: f.soldee ? "Soldée" : "Écart à corriger",
-    "Pièces à corriger": f.pieces.length,
+    "Pièces à corriger": f.pieces.filter((p) => !p.lettree).length,
+    "Écritures soldées (lettrage)": f.pieces.filter((p) => p.lettree).length,
     "RAN non considérés (462/467, 512/513, divers)": f.nbRanNonConsidere,
     "Total RAN non considérés": f.ranNonConsidere,
     ...(f.soldee
@@ -68,6 +70,8 @@ export function exportAnomalies(result: AnalysisResult) {
   // écritures qu'il faut corriger dans Sage pour solder la famille. Règle
   // RAN : seuls les à-nouveaux portant sur 401000, 460 ou 411 sont listés ;
   // les RAN 462/467, 512/513 ou divers sont résumés sur « Vérification familles ».
+  // Lettrage : les écritures soldées (montant exactement opposé) se
+  // compensent 2 à 2 et ne sont pas à corriger — elles sont marquées.
   const piecesFamilles = result.familles
     .filter((f) => !f.soldee)
     .flatMap((f) =>
@@ -84,6 +88,7 @@ export function exportAnomalies(result: AnalysisResult) {
         "Tous comptes": p.comptesTous,
         "Mouvement net": p.net,
         Anomalie: p.anomalie ? "Oui" : "",
+        "Soldée (lettrage)": p.lettree ? "Oui" : "",
         "Dans combinaison (écriture erronée)": p.dansCombinaison ? "Oui" : "",
         "Aussi dans": p.aussiDans?.join(", ") ?? "",
       })),
@@ -94,43 +99,51 @@ export function exportAnomalies(result: AnalysisResult) {
     "Pièces écarts familles",
   );
 
-  // Combinaisons exactes d'écritures erronées : pour chaque famille non
-  // soldée, la(les) plus petite(s) combinaison(s) de pièces dont la somme
-  // redonne exactement l'écart (l'écart peut être composé de plusieurs
-  // écritures erronées, pas toujours d'une seule).
+  // Combinaisons exactes d'écritures erronées (méthode du comptable) :
+  // lettrage d'abord (les écritures d'exact montant opposé se compensent),
+  // puis plus petite combinaison (1 à 4) parmi les NON soldées dont la
+  // somme redonne exactement l'écart — au plus UNE solution retenue par
+  // famille (les variantes équivalentes sont alternatives), sinon échec
+  // honnête : l'écart est le résidu des écritures non soldées.
   const combinaisons = result.familles
     .filter((f) => !f.soldee)
-    .flatMap((f): Record<string, string | number>[] =>
-      f.combinaisons.length === 0
-        ? [
-            {
-              Famille: f.nom,
-              Membres: f.membres.join(" + "),
-              "Écart feuille": f.ecart,
-              "RAN non considérés": f.ranNonConsidere,
-              Portée: "",
-              Solution: "",
-              "Nb écritures": "",
-              Écritures: f.combinaisonEchec
-                ? "(aucune combinaison exacte trouvée, 1 à 4 écritures)"
-                : "",
-              Somme: "",
-            },
-          ]
-        : f.combinaisons.map((c, ci) => ({
-            Famille: f.nom,
-            Membres: f.membres.join(" + "),
-            "Écart feuille": f.ecart,
-            "RAN non considérés": f.ranNonConsidere,
-            Portée: c.portee === "feuille" ? "Écart feuille" : "Hors RAN non considérés",
-            Solution: `${ci + 1} / ${f.combinaisons.length}`,
-            "Nb écritures": String(c.pieces.length),
-            Écritures: c.pieces
-              .map((p) => `${p.journal} ${p.piece} du ${p.date} — ${p.net.toFixed(2)}`)
-              .join(" + "),
-            Somme: c.somme,
-          })),
-    );
+    .flatMap((f): Record<string, string | number>[] => {
+      const base = {
+        Famille: f.nom,
+        Membres: f.membres.join(" + "),
+        "Écart feuille": f.ecart,
+        "RAN non considérés": f.ranNonConsidere,
+        "Non soldées (lettrage)": f.pieces.filter((p) => !p.lettree).length,
+        "Soldées (lettrage)": f.pieces.filter((p) => p.lettree).length,
+      };
+      const c = f.combinaisons[0];
+      if (!c) {
+        return [
+          {
+            ...base,
+            Portée: "",
+            "Nb écritures": "",
+            Écritures: f.combinaisonEchec
+              ? "(aucune combinaison de 1 à 4 écritures non soldées — l'écart est le résidu des non soldées, à corriger ensemble)"
+              : "",
+            Somme: "",
+            Variantes: "",
+          },
+        ];
+      }
+      return [
+        {
+          ...base,
+          Portée: c.portee === "feuille" ? "Écart feuille" : "Hors RAN non considérés",
+          "Nb écritures": String(c.pieces.length),
+          Écritures: c.pieces
+            .map((p) => `${p.journal} ${p.piece} du ${p.date} — ${p.net.toFixed(2)}`)
+            .join(" + "),
+          Somme: c.somme,
+          Variantes: f.nbVariantesCombinaison,
+        },
+      ];
+    });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(combinaisons), "Combinaisons écarts");
 
   // À-nouveaux de tiers (401000 / 460 / 411) hors familles : les RAN de

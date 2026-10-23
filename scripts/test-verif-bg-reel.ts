@@ -188,21 +188,33 @@ for (const f of reelles) {
   const somme = f.pieces.reduce((t, p) => t + p.net, 0);
   const rapproche = Math.abs(somme + f.ranNonConsidere - f.ecart) < 0.02;
   const tousNetNonNul = f.pieces.every((p) => Math.abs(p.net) >= 0.01);
-  const triees = f.pieces.every(
-    (p, i) => i === 0 || Math.abs(f.pieces[i - 1]!.net) >= Math.abs(p.net),
-  );
+  // Tri : non soldées d'abord (elles portent l'écart), puis soldées par
+  // lettrage — |net| décroissant dans chaque groupe.
+  const triees = f.pieces.every((p, i) => {
+    if (i === 0) return true;
+    const prev = f.pieces[i - 1]!;
+    if (Number(prev.lettree ?? false) !== Number(p.lettree ?? false)) return !prev.lettree; // transition autorisée : non soldée → soldée
+    return Math.abs(prev.net) >= Math.abs(p.net);
+  });
+  // Lettrage : une écriture soldée (montant exactement opposé à une autre)
+  // n'est JAMAIS candidate de la combinaison — elle se compense.
+  const lettrageOk = f.pieces.every((p) => !(p.lettree && p.dansCombinaison));
+  // Σ des non soldées (le vivier de la recherche) + RAN non considérés = écart.
+  const sommeNonSold = f.pieces.filter((p) => !p.lettree).reduce((t, p) => t + p.net, 0);
+  const rapprocheLettrage = Math.abs(sommeNonSold + f.ranNonConsidere - f.ecart) < 0.02;
   // Aucune pièce RAN listée ne doit porter un net sur 462/467/512/513 :
   // ses comptes de périmètre doivent tous être des comptes considérés
   // (401000 / 460 / 411 — en pratique des 460xxx dans le périmètre famille).
   const ranOk = f.pieces
     .filter((p) => p.role === "a_nouveaux")
     .every((p) => p.comptes.split(", ").every((c) => /^(401000|460|411)/.test(c)));
-  if (rapproche && tousNetNonNul && triees && ranOk) pOK++;
+  if (rapproche && tousNetNonNul && triees && ranOk && lettrageOk && rapprocheLettrage) pOK++;
   else pKO++;
   const roles: Record<string, number> = {};
   for (const p of f.pieces) roles[p.role] = (roles[p.role] ?? 0) + 1;
+  const nbSold = f.pieces.filter((p) => p.lettree).length;
   console.log(
-    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} | Σ=${somme.toFixed(2).padStart(13)} | RAN non cons.=${f.nbRanNonConsidere} (${f.ranNonConsidere.toFixed(2)}) | ${rapproche ? "Σ+RAN=écart ✓" : "RAPPROCHEMENT DIFF"}${tousNetNonNul ? "" : " | NET NUL !"}${triees ? "" : " | MAL TRIÉ"}${ranOk ? "" : " | RAN 462/467 LISTÉ !"} | roles=${JSON.stringify(roles)}`,
+    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} (non soldées ${String(f.pieces.length - nbSold).padStart(4)}, soldées ${String(nbSold).padStart(4)}) | Σ non sold.=${sommeNonSold.toFixed(2).padStart(13)} | RAN non cons.=${f.nbRanNonConsidere} (${f.ranNonConsidere.toFixed(2)}) | ${rapproche && rapprocheLettrage ? "Σ+RAN=écart ✓" : "RAPPROCHEMENT DIFF"}${tousNetNonNul ? "" : " | NET NUL !"}${triees ? "" : " | MAL TRIÉ"}${ranOk ? "" : " | RAN 462/467 LISTÉ !"}${lettrageOk ? "" : " | SOLDÉE DANS COMBINAISON !"} | roles=${JSON.stringify(roles)}`,
   );
   for (const p of f.pieces.filter((p) => p.role === "a_nouveaux").slice(0, 3)) {
     console.log(
@@ -270,8 +282,8 @@ let cOK = 0;
 let cKO = 0;
 for (const f of reelles) {
   if (f.combinaisons.length === 0) {
-    // Échec honnête accepté (écart composé de plus de 4 écritures) : aucune
-    // combinaison annoncée, donc aucune somme fausse.
+    // Échec honnête accepté (écart composé de plus de 4 écritures non
+    // soldées) : aucune combinaison annoncée, donc aucune somme fausse.
     if (f.combinaisonEchec && f.nbVariantesCombinaison === 0) cOK++;
     else cKO++;
     console.log(
@@ -280,13 +292,17 @@ for (const f of reelles) {
     continue;
   }
   let ok = true;
+  // Au plus UNE solution retenue : les variantes « exactes » sont
+  // alternatives et non cumulatives, les marquer toutes serait faux.
+  if (f.combinaisons.length > 1) ok = false;
   for (const c of f.combinaisons) {
     // Exactitude au centime : Σ des nets de la combinaison = cible annoncée.
     const sommeCents = Math.round(c.pieces.reduce((t, p) => t + p.net, 0) * 100);
     if (sommeCents !== Math.round(c.cible * 100) || sommeCents !== Math.round(c.somme * 100))
       ok = false;
-    // Les pièces de la combinaison sont marquées erronées et appartiennent à la famille.
-    if (!c.pieces.every((p) => p.dansCombinaison && f.pieces.includes(p))) ok = false;
+    // Les pièces de la combinaison sont marquées erronées, appartiennent à
+    // la famille et ne sont JAMAIS des écritures soldées par lettrage.
+    if (!c.pieces.every((p) => p.dansCombinaison && !p.lettree && f.pieces.includes(p))) ok = false;
     // Portée cohérente : « feuille » vise l'écart complet, « hors_ran » l'écart
     // diminué des RAN non considérés.
     const cibleAttendue =
@@ -299,10 +315,30 @@ for (const f of reelles) {
   console.log(
     `  ${f.nom.padEnd(22)} : ${c.pieces.length} écriture(s) [${c.portee}] ${c.pieces
       .map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`)
-      .join(" + ")} = ${c.somme.toFixed(2)} ✓${f.nbVariantesCombinaison > f.combinaisons.length ? ` (${f.nbVariantesCombinaison} variantes)` : ""}`,
+      .join(
+        " + ",
+      )} = ${c.somme.toFixed(2)} ✓${f.nbVariantesCombinaison > 1 ? ` (${f.nbVariantesCombinaison} variantes alternatives)` : ""}`,
   );
 }
 console.log(`Combinaisons : ${cOK} OK, ${cKO} KO sur ${reelles.length} familles réelles`);
+
+// BOOST (cas de l'utilisateur) : après lettrage (420 écritures soldées 2 à 2
+// par montant exactement opposé), l'écart -186 186,80 est le résidu des 132
+// écritures non soldées — aucune combinaison de 1 à 4 ne l'explique, et les
+// fausses pistes mélangeant BOOST + JBS + JBU + SANLAMALLIANZ ont disparu.
+const boost = reelles.find((f) => f.nom === "BOOST")!;
+const nbSoldBoost = boost.pieces.filter((p) => p.lettree).length;
+const nbNonSoldBoost = boost.pieces.length - nbSoldBoost;
+const sommeNonSoldBoost = boost.pieces.filter((p) => !p.lettree).reduce((t, p) => t + p.net, 0);
+const boostOk =
+  boost.combinaisonEchec &&
+  boost.combinaisons.length === 0 &&
+  nbSoldBoost === 420 &&
+  nbNonSoldBoost === 132 &&
+  Math.abs(sommeNonSoldBoost - boost.ecart) < 0.02;
+console.log(
+  `BOOST résidu non soldé : échec honnête ${boost.combinaisonEchec ? "OK" : "KO"}, ${nbSoldBoost} soldées / ${nbNonSoldBoost} non soldées, Σ non soldées = ${sommeNonSoldBoost.toFixed(2)} = écart ${boost.ecart.toFixed(2)} : ${boostOk ? "OK" : "KO"}`,
+);
 
 // Cas de référence du comptable : l'écart 90 000 de la famille TOM.
 const tom = reelles.find((f) => f.nom === "TOM");
@@ -312,7 +348,9 @@ const tomOk =
   tom.combinaisons[0]!.portee === "feuille" &&
   tom.combinaisons[0]!.pieces.length === 1 &&
   Math.round(tom.combinaisons[0]!.pieces[0]!.net * 100) === 9000000;
-console.log(`TOM 90 000 : combinaison exacte ${tomOk ? "OK" : "KO"} (${tom?.combinaisons[0]?.pieces.map((p) => `${p.journal} ${p.piece} ${p.net}`).join(" + ") ?? "aucune"})`);
+console.log(
+  `TOM 90 000 : combinaison exacte ${tomOk ? "OK" : "KO"} (${tom?.combinaisons[0]?.pieces.map((p) => `${p.journal} ${p.piece} ${p.net}`).join(" + ") ?? "aucune"})`,
+);
 
 // AITS : l'écart feuille 0,40 est composé de DEUX écritures (0,32 + 0,08).
 const aits = reelles.find((f) => f.nom === "AITS");
@@ -322,11 +360,15 @@ const aitsOk =
   aits.combinaisons[0]!.portee === "feuille" &&
   aits.combinaisons[0]!.pieces.length === 2 &&
   Math.round(aits.combinaisons[0]!.somme * 100) === 40;
-console.log(`AITS 0,40 : combinaison de 2 écritures ${aitsOk ? "OK" : "KO"} (${aits?.combinaisons[0]?.pieces.map((p) => p.net.toFixed(2)).join(" + ") ?? "aucune"})`);
+console.log(
+  `AITS 0,40 : combinaison de 2 écritures ${aitsOk ? "OK" : "KO"} (${aits?.combinaisons[0]?.pieces.map((p) => p.net.toFixed(2)).join(" + ") ?? "aucune"})`,
+);
 
 // Cohérence des stats de combinaisons
 const marquees = new Set(
-  reelles.flatMap((f) => f.pieces.filter((p) => p.dansCombinaison).map((p) => `${p.journal}|${p.piece}|${p.date}`)),
+  reelles.flatMap((f) =>
+    f.pieces.filter((p) => p.dansCombinaison).map((p) => `${p.journal}|${p.piece}|${p.date}`),
+  ),
 ).size;
 const statsCombOk =
   result.stats.famillesResolues === reelles.filter((f) => f.combinaisons.length > 0).length &&

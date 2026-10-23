@@ -2,30 +2,41 @@ import type { CombinaisonEcart, PieceEcart } from "./analysis-types";
 
 /**
  * Détection EXACTE des écritures erronées qui composent un écart de famille
- * (feuille 2 du Verif BG). Principe du comptable : l'écart correspond à la
- * somme des écritures erronées, et un écart peut être composé de PLUSIEURS
- * écritures erronées — pas toujours d'une seule. Ex. écart 90 000 formé de
- * trois écritures erronées 48 000 + 2 000 + 40 000, comme d'une seule de
- * 90 000.
+ * (feuille 2 du Verif BG) — méthode du comptable, en deux temps :
  *
- * Recherche du plus petit sous-ensemble de pièces (1 à 4 écritures) dont la
- * somme des mouvements nets redonne exactement l'écart, au centime :
+ *  1. LETTRAGE : les pièces d'exact montant opposé se compensent 2 à 2 (ex.
+ *     le volet banque et le volet tiers d'une même opération, ou un compte à
+ *     compte entrant et sortant). Elles sont « soldées » : leur correction
+ *     n'est pas nécessaire et elles ne peuvent pas, à elles seules,
+ *     expliquer l'écart. La recherche ne les considère JAMAIS.
+ *  2. COMBINAISON EXACTE : parmi les pièces NON soldées (non lettrées),
+ *     recherche de la plus petite combinaison (1 à 4 écritures) dont la
+ *     somme des mouvements nets redonne exactement l'écart, au centime —
+ *     un écart peut être composé de PLUSIEURS écritures erronées, pas
+ *     toujours d'une seule (ex. 90 000 = 48 000 + 2 000 + 40 000).
+ *     500 000 + -313 813,20 = 186 186,80 est aussi « exact » mais absurde
+ *     pour un comptable : le lettrage préalable élimine ce bruit.
+ *
+ * Au plus UNE combinaison est retenue (la plus plausible : écritures
+ * suspectes d'abord, masse la plus faible ensuite) et seules SES écritures
+ * sont marquées erronées — les variantes équivalentes sont comptées mais
+ * pas marquées, car elles sont alternatives et non cumulatives. Sans
+ * combinaison, l'écart est déclaré résidu des écritures non soldées
+ * (échec honnête, pas de fausse piste) : le lettrage préalable réduit déjà
+ * fortement la liste à examiner (ex. BOOST : 132 non soldées sur 552).
+ *
+ * Détails techniques :
  *  — taille 1 : une seule écriture fautive ;
  *  — taille 2 : complément par table de hachage ;
  *  — taille 3 : paires + complément par table de hachage ;
  *  — taille 4 : jointure de paires (meet-in-the-middle).
- * Les variantes de même taille sont dédupliquées par signature de montants
- * et ordonnées « comme un comptable » : les combinaisons d'écritures
- * suspectes (anomalie, hors schéma) d'abord, puis la masse la plus faible.
- * Un budget d'exploration borne les cas dégénérés (beaucoup de montants
- * identiques) sans jamais fausser le résultat : une combinaison renvoyée
- * est toujours exacte, la borne ne peut que laisser des variantes de côté.
+ *  — tout le calcul est en entiers (centimes) : zéro erreur d'arrondi ;
+ *  — un budget d'exploration borne les cas dégénérés sans jamais fausser
+ *    le résultat : une combinaison renvoyée est toujours exacte.
  */
 
 /** Taille maximale d'une combinaison d'écritures erronées recherchée. */
 const TAILLE_MAX = 4;
-/** Variantes maximales retenues et présentées par famille. */
-const MAX_SOLUTIONS = 3;
 /** Plafond de solutions brutes collectées à une taille donnée. */
 const MAX_BRUTES = 300;
 /** Budget anti-explosion (nombre de candidats examinés) par taille. */
@@ -44,12 +55,19 @@ interface SolutionBrute {
 }
 
 export interface ResolutionEcart {
-  /** Combinaisons retenues (taille minimale, MAX_SOLUTIONS au plus). */
+  /** Combinaison retenue (au plus une : la plus plausible). */
   solutions: CombinaisonEcart[];
-  /** Nombre total de variantes distinctes à la taille minimale. */
+  /** Nombre total de variantes distinctes à la taille de la solution. */
   nbTotal: number;
-  /** Vrai si aucune combinaison exacte n'a été trouvée (jusqu'à 4 écritures). */
+  /** Vrai si aucune combinaison exacte n'a été trouvée (jusqu'à 4 écritures
+   *  parmi les non soldées) : l'écart est le résidu de ces écritures. */
   echec: boolean;
+  /** Nombre d'écritures non soldées (non lettrées) — le vivier de la
+   *  recherche et, à défaut de combinaison, la liste des contributeurs. */
+  nbNonSoldees: number;
+  /** Nombre d'écritures soldées par lettrage (opposé exact) — se
+   *  compensent entre elles, pas à corriger. */
+  nbSoldees: number;
 }
 
 /** Signature d'une combinaison : ses montants triés. Sert à dédupliquer les
@@ -61,6 +79,39 @@ const signature = (idx: number[], vals: number[]) =>
     .map((i) => vals[i]!)
     .sort((a, b) => a - b)
     .join("+");
+
+/** LETTRAGE par montants exactement opposés : marque `lettree` les pièces
+ *  qui se compensent 2 à 2 (une pièce de +X avec une pièce de −X, au
+ *  centime). Renvoie le nombre de paires soldées. Les pièces de net nul ne
+ *  sont pas lettrées (elles ne portent rien sur le périmètre). */
+export function lettrerParMontant(pieces: PieceEcart[]): number {
+  const pools = new Map<number, PieceEcart[]>();
+  for (const p of pieces) {
+    const c = cents(p.net);
+    if (c === 0) continue;
+    const arr = pools.get(c);
+    if (arr) arr.push(p);
+    else pools.set(c, [p]);
+  }
+  let nbPaires = 0;
+  // Parcours par |montant| décroissant (l'ordre ne change pas le résultat :
+  // les paires d'exact opposé sont uniques, seul l'appariement entre instances
+  // de même montant varie — sans effet sur les montants).
+  for (const [c, arr] of [...pools.entries()].sort((a, b) => Math.abs(b[0]) - Math.abs(a[0]))) {
+    if (c < 0) continue;
+    const opp = pools.get(-c);
+    if (!opp || opp.length === 0) continue;
+    const k = Math.min(arr.length, opp.length);
+    for (let i = 0; i < k; i++) {
+      arr[i]!.lettree = true;
+      opp[i]!.lettree = true;
+    }
+    arr.splice(0, k);
+    opp.splice(0, k);
+    nbPaires += k;
+  }
+  return nbPaires;
+}
 
 /** Recherche exhaustive bornée des combinaisons d'exactement k pièces sommant
  *  à la cible (centimes). Dédupliquée par signature de montants. */
@@ -160,19 +211,45 @@ function chercherTaille(
   return sols;
 }
 
-/** Résout un écart de famille : trouve la(les) plus petite(s) combinaison(s)
- *  d'écritures dont la somme redonne exactement l'écart de la feuille. Si
- *  aucune combinaison n'explique l'écart complet (à cause des RAN non
- *  considérés 462/467 qui restent dans les soldes), retente sur l'écart hors
- *  RAN non considérés — la combinaison est alors signalée « hors_ran ». */
+/** Résout un écart de famille (méthode du comptable) :
+ *  1. lettrage par montants exactement opposés → pièces soldées marquées
+ *     `lettree` (elles se compensent, jamais candidates) ;
+ *  2. recherche de la plus petite combinaison (1 à 4 écritures) parmi les
+ *     NON soldées dont la somme redonne exactement l'écart de la feuille ;
+ *     si les RAN non considérés (462/467/512/513) empêchent l'égalité
+ *     exacte, retente sur l'écart hors RAN non considérés (« hors_ran ») ;
+ *  3. au plus UNE solution retenue (la plus plausible), seules ses écritures
+ *     sont marquées `dansCombinaison` ; les variantes équivalentes sont
+ *     comptées (nbTotal) mais pas marquées ;
+ *  4. sans combinaison : échec honnête — l'écart est le résidu des écritures
+ *     non soldées, renvoyé avec leurs nombres (nbNonSoldees / nbSoldees). */
 export function resoudreEcartFamille(
   pieces: PieceEcart[],
   ecartFeuille: number,
   ranNonConsidere: number,
 ): ResolutionEcart {
-  const vals = pieces.map((p) => cents(p.net));
-  const suspecte = pieces.map((p) => p.anomalie || p.role === "autre");
+  // État frais : les marques d'un appel précédent ne doivent pas subsister.
+  for (const p of pieces) {
+    p.lettree = false;
+    p.dansCombinaison = false;
+  }
 
+  // 1. Lettrage : les pièces d'exact montant opposé se compensent.
+  lettrerParMontant(pieces);
+  const vivier = pieces.filter((p) => !p.lettree);
+  const nbSoldees = pieces.length - vivier.length;
+  const echec: ResolutionEcart = {
+    solutions: [],
+    nbTotal: 0,
+    echec: true,
+    nbNonSoldees: vivier.length,
+    nbSoldees,
+  };
+
+  const vals = vivier.map((p) => cents(p.net));
+  const suspecte = vivier.map((p) => p.anomalie || p.role === "autre");
+
+  // 2. Cibles : l'écart feuille d'abord, puis l'écart hors RAN non considérés.
   const tFeuille = cents(ecartFeuille);
   const cibles: { t: number; portee: CombinaisonEcart["portee"] }[] = [
     { t: tFeuille, portee: "feuille" },
@@ -193,19 +270,26 @@ export function resoudreEcartFamille(
           a.masse - b.masse ||
           signature(a.idx, vals).localeCompare(signature(b.idx, vals)),
       );
-      const solutions: CombinaisonEcart[] = brutes.slice(0, MAX_SOLUTIONS).map((b) => ({
-        pieces: b.idx.map((i) => pieces[i]!),
-        somme: b.idx.reduce((tt, i) => tt + vals[i]!, 0) / 100,
+      // 3. UNE seule solution retenue — les variantes sont alternatives et
+      // non cumulatives : marquer leurs unions serait faux (c'est exactement
+      // ce qui affichait « 11 écritures erronées » mélangant des variantes).
+      const retenue = brutes[0]!;
+      const solution: CombinaisonEcart = {
+        pieces: retenue.idx.map((i) => vivier[i]!),
+        somme: retenue.idx.reduce((tt, i) => tt + vals[i]!, 0) / 100,
         cible: t / 100,
         portee,
-      }));
-      // Les écritures de la combinaison retenue sont marquées erronées (à
-      // corriger en priorité dans Sage) directement sur les pièces de la famille.
-      for (const c of solutions) {
-        for (const p of c.pieces) p.dansCombinaison = true;
-      }
-      return { solutions, nbTotal: brutes.length, echec: false };
+      };
+      for (const p of solution.pieces) p.dansCombinaison = true;
+      return {
+        solutions: [solution],
+        nbTotal: brutes.length,
+        echec: false,
+        nbNonSoldees: vivier.length,
+        nbSoldees,
+      };
     }
   }
-  return { solutions: [], nbTotal: 0, echec: true };
+  // 4. Échec honnête : l'écart est le résidu des écritures non soldées.
+  return echec;
 }

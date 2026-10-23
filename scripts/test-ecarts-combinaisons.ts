@@ -1,9 +1,11 @@
 /**
  * Tests unitaires du détecteur de combinaisons exactes (src/lib/ecarts.ts).
- * Principe comptable : l'écart de la feuille 2 du Verif BG correspond à la
- * somme des écritures erronées, et un écart peut être composé de PLUSIEURS
- * écritures erronées — pas toujours d'une seule. Ex. écart 90 000 formé de
- * 48 000 + 2 000 + 40 000.
+ * Méthode du comptable : (1) lettrage par montants exactement opposés — les
+ * écritures soldées se compensent et ne sont jamais candidates ; (2) plus
+ * petite combinaison (1 à 4) parmi les écritures NON soldées dont la somme
+ * redonne exactement l'écart — un écart peut être composé de PLUSIEURS
+ * écritures erronées, pas toujours d'une seule (ex. 90 000 = 48 000 + 2 000
+ * + 40 000). Au plus une solution retenue (les variantes sont alternatives).
  * Exécution : npx esbuild scripts/test-ecarts-combinaisons.ts --bundle
  *   --format=cjs --platform=node --outfile=/tmp/t-ecarts.cjs && node /tmp/t-ecarts.cjs
  */
@@ -54,12 +56,9 @@ const cas1 = [
 ];
 const r1 = resoudreEcartFamille(cas1, 90000, 0);
 const s1 = r1.solutions[0];
-check("une combinaison est trouvée", r1.solutions.length > 0 && !r1.echec);
-check(
-  "combinaison de 3 écritures",
-  s1?.pieces.length === 3,
-  `taille=${s1?.pieces.length}`,
-);
+check("une combinaison est trouvée", r1.solutions.length === 1 && !r1.echec);
+check("au plus une solution retenue", r1.solutions.length <= 1);
+check("combinaison de 3 écritures", s1?.pieces.length === 3, `taille=${s1?.pieces.length}`);
 check(
   "somme exacte = 90 000,00",
   s1 !== undefined && cents(s1.somme) === 9000000 && cents(s1.cible) === 9000000,
@@ -107,15 +106,10 @@ const cas3 = [
 const r3 = resoudreEcartFamille(cas3, 2000, 0);
 check(
   "combinaison de 2 écritures de 1 000",
-  r3.solutions[0]?.pieces.length === 2 &&
-    r3.solutions[0]?.pieces.every((p) => p.net === 1000),
+  r3.solutions[0]?.pieces.length === 2 && r3.solutions[0]?.pieces.every((p) => p.net === 1000),
   JSON.stringify(r3.solutions[0]?.pieces.map((p) => p.net)),
 );
-check(
-  "variantes dédupliquées (montants identiques)",
-  r3.nbTotal === 1,
-  `nbTotal=${r3.nbTotal}`,
-);
+check("variantes dédupliquées (montants identiques)", r3.nbTotal === 1, `nbTotal=${r3.nbTotal}`);
 
 // 4. Écart négatif : -50 000 = -30 000 + -20 000
 console.log("\n4. Écart négatif -50 000 = -30 000 + -20 000");
@@ -128,8 +122,7 @@ const cas4 = [
 const r4 = resoudreEcartFamille(cas4, -50000, 0);
 check(
   "combinaison de 2 écritures négatives",
-  r4.solutions[0]?.pieces.length === 2 &&
-    cents(r4.solutions[0]?.somme ?? 0) === -5000000,
+  r4.solutions[0]?.pieces.length === 2 && cents(r4.solutions[0]?.somme ?? 0) === -5000000,
   JSON.stringify(r4.solutions[0]?.pieces.map((p) => p.net)),
 );
 
@@ -164,7 +157,9 @@ check(
 );
 
 // 7. Priorité comptable : à taille égale, les écritures suspectes d'abord
-console.log("\n7. Deux solutions de taille 1 : l'écriture suspecte (anomalie) est présentée en premier");
+console.log(
+  "\n7. Deux solutions de taille 1 : l'écriture suspecte (anomalie) est présentée en premier",
+);
 const cas7 = [
   piece("BNI", "701", 10000),
   piece("OD", "702", 10000, { anomalie: true, role: "autre" }),
@@ -225,6 +220,74 @@ console.log(`      recherche sur 600 pièces : ${Date.now() - t10} ms`);
 check(
   "terminaison bornée avec échec honnête ou solution exacte",
   r10.echec || cents(r10.solutions[0]!.somme) === cents(123456.78),
+);
+check(
+  "lettrage cohérent (soldées + non soldées = total)",
+  r10.nbSoldees + r10.nbNonSoldees === 600 && r10.nbSoldees % 2 === 0,
+  `soldées=${r10.nbSoldees}, non soldées=${r10.nbNonSoldees}`,
+);
+
+// 11. LETTRAGE : les écritures d'exact montant opposé sont soldées et jamais
+// candidates — le volet banque et le volet tiers d'une même opération se
+// compensent, l'écart vient des écritures non soldées.
+console.log("\n11. Lettrage : les paires opposées exactes sont soldées, jamais candidates");
+const cas11 = [
+  piece("TIERS", "110", 90000), // la vraie erreur, non soldée
+  piece("BNI", "111", 12000),
+  piece("TIERS", "112", -12000), // paire soldée (même opération)
+  piece("BNI", "113", 30000),
+  piece("TIERS", "114", -30000), // paire soldée
+];
+const r11 = resoudreEcartFamille(cas11, 90000, 0);
+check(
+  "la solution ne contient que des écritures non soldées",
+  r11.solutions[0]?.pieces.every((p) => !p.lettree) ?? false,
+);
+check(
+  "les paires opposées sont marquées soldées (lettrage)",
+  cas11.filter((p) => p.lettree).length === 4 &&
+    cas11.find((p) => p.piece === "110")?.lettree === false,
+);
+check(
+  "compteurs lettrage : 4 soldées, 1 non soldée",
+  r11.nbSoldees === 4 && r11.nbNonSoldees === 1,
+  `soldées=${r11.nbSoldees}, non soldées=${r11.nbNonSoldees}`,
+);
+check(
+  "la vraie erreur 90 000 reste détectée (taille 1)",
+  r11.solutions[0]?.pieces[0]?.piece === "110",
+);
+
+// 12. Le lettrage supprime les FAUSSES PISTES : des écritures soldées qui se
+// combinent au centime près avec l'écart (cas BOOST réel : -3 432 080 +
+// 1 808 880 + 778 488 + 658 525,20 = -186 186,80) ne sont plus candidates.
+console.log("\n12. Anti-fausse piste : une combinaison exacte d'écritures soldées est rejetée");
+const cas12 = [
+  piece("BNI", "121", -3432080), // ┐
+  piece("BNI", "122", 3432080), // │ paires soldées (opér. complètes) —
+  piece("BNI", "123", -1808880), // │ leur combinaison -3 432 080 + 1 808 880
+  piece("BNI", "124", 1808880), // │ + 778 488 + 658 525,20 = -186 186,80
+  piece("BNI", "125", 778488), // │ est exacte mais ABSURDE (cas BOOST réel)
+  piece("BNI", "126", -778488), // │
+  piece("BNI", "127", 658525.2), // │
+  piece("BNI", "128", -658525.2), // ┘
+  piece("TIERS", "129", 100000), // non soldées — ne forment pas l'écart
+  piece("TIERS", "130", 86186.8), // (écart cible négatif)
+];
+const r12 = resoudreEcartFamille(cas12, -186186.8, 0);
+check(
+  "aucune fausse piste : échec honnête (pas de combinaison avec les soldées)",
+  r12.echec && r12.solutions.length === 0 && r12.nbTotal === 0,
+  `solutions=${r12.solutions.length}, variantes=${r12.nbTotal}, echec=${r12.echec}`,
+);
+check(
+  "les 8 écritures soldées sont lettrées, les 2 autres non",
+  r12.nbSoldees === 8 && r12.nbNonSoldees === 2,
+  `soldées=${r12.nbSoldees}, non soldées=${r12.nbNonSoldees}`,
+);
+check(
+  "aucune écriture marquée erronée à tort",
+  cas12.every((p) => !p.dansCombinaison),
 );
 
 console.log(`\n=== Résultat : ${pass} PASS, ${fail} FAIL ===`);

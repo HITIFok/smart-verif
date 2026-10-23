@@ -117,6 +117,12 @@ export interface PieceEcart {
   /** La pièce fait partie de la combinaison exacte détectée : c'est une des
    *  écritures erronées qui composent l'écart (à corriger en priorité). */
   dansCombinaison?: boolean;
+  /** La pièce est soldée par lettrage : une autre pièce de la même famille
+   *  porte exactement le montant opposé (opération complète, ex. le volet
+   *  banque et le volet tiers d'un même paiement). Ces pièces se compensent
+   *  entre elles : elles ne peuvent pas, à elles seules, expliquer l'écart
+   *  et ne sont pas à corriger. */
+  lettree?: boolean;
 }
 
 /** À-nouveau du journal RAN portant sur un compte de tiers réel (401000,
@@ -163,14 +169,21 @@ export interface FamilleVerif {
   ranNonConsidere: number;
   /** Nombre de pièces RAN non considérées pour cette famille. */
   nbRanNonConsidere: number;
-  /** Détection exacte : la(les) plus petite(s) combinaison(s) d'écritures
-   *  erronées dont la somme redonne l'écart (1 à 4 écritures). Un écart peut
-   *  venir de plusieurs écritures erronées, pas toujours d'une seule. */
+  /** Détection exacte (méthode du comptable) : les pièces d'exact montant
+   *  opposé sont d'abord soldées par lettrage — elles se compensent et ne
+   *  peuvent pas expliquer l'écart à elles seules ; la plus petite combinaison
+   *  d'écritures NON soldées (1 à 4) dont la somme redonne exactement l'écart
+   *  est ensuite recherchée. Un écart peut venir de plusieurs écritures
+   *  erronées, pas toujours d'une seule. Au plus UNE solution retenue (la
+   *  plus plausible) : plusieurs variantes « exactes » existent parfois, et
+   *  les marquer toutes erronées serait faux. */
   combinaisons: CombinaisonEcart[];
-  /** Nombre de variantes distinctes trouvées à la taille minimale (au-delà
-   *  des combinaisons retenues). */
+  /** Nombre de variantes distinctes à la taille de la solution retenue
+   *  (la combinaison retenue est la plus plausible parmi elles). */
   nbVariantesCombinaison: number;
-  /** Aucune combinaison exacte trouvée (recherche bornée à 4 écritures). */
+  /** Aucune combinaison exacte trouvée parmi les écritures non soldées
+   *  (recherche bornée à 4 écritures) : l'écart est le résidu de ces
+   *  écritures, listées comme contributeurs — pas de fausse piste. */
   combinaisonEchec: boolean;
 }
 
