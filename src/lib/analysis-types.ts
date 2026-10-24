@@ -11,6 +11,11 @@ export interface EntryLine {
   libelle: string;
   debit: number;
   credit: number;
+  /** Code de lettrage Sage de la ligne (colonne « Lettrage montant » du
+   *  brouillard) : les lignes partageant le même (compte, tiers, code)
+   *  forment un groupe de lettrage ; un groupe qui somme à zéro prouve que
+   *  l'opération est soldée dans Sage. */
+  lettrage?: string;
 }
 
 export interface Anomaly {
@@ -125,6 +130,14 @@ export interface PieceEcart {
    *  entre elles : elles ne peuvent pas, à elles seules, expliquer l'écart
    *  et ne sont pas à corriger. */
   lettree?: boolean;
+  /** La pièce est soldée par le LETTRAGE SAGE (preuve comptable) : toutes
+   *  ses lignes portant un code de lettrage appartiennent à des groupes
+   *  (compte + tiers + code) équilibrés dans le brouillard, et ses lignes
+   *  sans code sont bancaires (512/513) — ex. un règlement BOAOMM dont le
+   *  volet 401000 est lettré avec la pièce TIERS de facturation. Régularisée
+   *  dans Sage : pas à corriger, même si son net sur le périmètre famille
+   *  participe arithmétiquement à l'écart. */
+  lettreeSage?: boolean;
 }
 
 /** À-nouveau du journal RAN portant sur un compte de tiers réel (401000,

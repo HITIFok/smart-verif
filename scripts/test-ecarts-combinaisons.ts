@@ -335,5 +335,69 @@ check(
   JSON.stringify(r13.variantes.map((v) => v.pieces.map((p) => p.piece).join("+"))),
 );
 
+// 14. LETTRAGE SAGE : une pièce régularisée dans Sage (lettreeSage, preuve
+// groupes équilibrés) n'est JAMAIS candidate — même si son net tombe juste
+// sur l'écart (cas EVIOSYS réel : les règlements BOAOMM soldés par lettrage
+// 401000 étaient accusés parce que leur somme redonnait l'écart feuille).
+console.log("\n14. Lettrage Sage : la pièce régularisée n'est jamais candidate");
+const cas14 = [
+  piece("BOAOMM", "1401", -4606000), // règlement soldé dans Sage
+  piece("TIERS", "1402", 48000),
+  piece("TIERS", "1403", 2000),
+  piece("TIERS", "1404", 40000),
+];
+for (const p of cas14) p.lettreeSage = p.piece === "1401";
+const r14 = resoudreEcartFamille(cas14, -4606000, 0);
+check(
+  "sans elle aucune combinaison ne tombe juste : échec honnête",
+  r14.echec && r14.solutions.length === 0,
+  `echec=${r14.echec}, nbTotal=${r14.nbTotal}`,
+);
+check(
+  "la pièce soldée Sage n'est ni compensée ni marquée erronée",
+  !cas14[0]!.lettree && !cas14[0]!.dansCombinaison,
+);
+// Même cas mais avec cible atteignable sans la pièce Sage : l'écart vaut
+// 90 000 côté écritures (feuille en désaccord ici pour isoler la règle).
+const cas14b = [
+  piece("BOAOMM", "1411", -90000), // soldée Sage
+  piece("TIERS", "1412", 48000),
+  piece("TIERS", "1413", 2000),
+  piece("TIERS", "1414", 40000),
+  piece("TIERS", "1415", -250000),
+];
+for (const p of cas14b) p.lettreeSage = p.piece === "1411";
+const r14b = resoudreEcartFamille(cas14b, -186186.8, 0);
+check(
+  "sans combinaison possible hors pièce Sage : échec honnête",
+  r14b.echec && r14b.solutions.length === 0,
+  `echec=${r14b.echec}`,
+);
+check(
+  "compteurs : 1 soldée Sage, 0 compensée, 4 non soldées",
+  r14b.nbLettreesSage === 1 && r14b.nbSoldees === 1 && r14b.nbNonSoldees === 4,
+  `sage=${r14b.nbLettreesSage}, soldées=${r14b.nbSoldees}, non soldées=${r14b.nbNonSoldees}`,
+);
+check(
+  "la pièce Sage n'est ni lettree (compensation) ni dansCombinaison",
+  !cas14b[0]!.lettree && !cas14b[0]!.dansCombinaison,
+);
+// Cas mixte : pièce Sage + pièces non soldées tombant juste → la
+// combinaison ne contient que les non soldées.
+const cas14c = [
+  piece("BOAOMM", "1421", -186186.8), // soldée Sage
+  piece("TIERS", "1422", -90000),
+  piece("TIERS", "1423", -96186.8),
+];
+for (const p of cas14c) p.lettreeSage = p.piece === "1421";
+const r14c = resoudreEcartFamille(cas14c, -186186.8, 0);
+check(
+  "la combinaison exacte utilise les non soldées, pas la pièce Sage",
+  !r14c.echec &&
+    r14c.solutions[0]!.pieces.length === 2 &&
+    r14c.solutions[0]!.pieces.every((p) => !p.lettreeSage),
+  r14c.solutions[0]?.pieces.map((p) => p.piece).join(", ") ?? "échec",
+);
+
 console.log(`\n=== Résultat : ${pass} PASS, ${fail} FAIL ===`);
 if (fail > 0) process.exit(1);

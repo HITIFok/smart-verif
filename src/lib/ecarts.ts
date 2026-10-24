@@ -2,14 +2,23 @@ import type { CombinaisonEcart, PieceEcart } from "./analysis-types";
 
 /**
  * Détection EXACTE des écritures erronées qui composent un écart de famille
- * (feuille 2 du Verif BG) — méthode du comptable, en deux temps :
+ * (feuille 2 du Verif BG) — méthode du comptable, en trois temps :
  *
- *  1. LETTRAGE : les pièces d'exact montant opposé se compensent 2 à 2 (ex.
- *     le volet banque et le volet tiers d'une même opération, ou un compte à
- *     compte entrant et sortant). Elles sont « soldées » : leur correction
- *     n'est pas nécessaire et elles ne peuvent pas, à elles seules,
- *     expliquer l'écart. La recherche ne les considère JAMAIS.
- *  2. COMBINAISON EXACTE : parmi les pièces NON soldées (non lettrées),
+ *  1. LETTRAGE SAGE (preuve) : une pièce dont toutes les lignes lettrées
+ *     appartiennent à des groupes de lettrage équilibrés (compte + tiers +
+ *     code, colonne « Lettrage montant » du brouillard) et dont les lignes
+ *     sans code sont bancaires est RÉGULARISÉE dans Sage (ex. le règlement
+ *     BOAOMM dont le volet 401000 est lettré avec la pièce TIERS de
+ *     facturation). Elle n'est JAMAIS candidate : même si son net sur le
+ *     périmètre famille participe arithmétiquement à l'écart, elle est
+ *     correcte et soldée — la corriger serait une fausse piste.
+ *  2. COMPENSATION : les pièces restantes d'exact montant opposé se
+ *     compensent 2 à 2 (ex. le volet banque et le volet tiers d'une même
+ *     opération, ou un compte à compte entrant et sortant). Elles sont
+ *     « soldées » : leur correction n'est pas nécessaire et elles ne
+ *     peuvent pas, à elles seules, expliquer l'écart. La recherche ne les
+ *     considère JAMAIS.
+ *  3. COMBINAISON EXACTE : parmi les pièces NON soldées (non lettrées),
  *     recherche de la plus petite combinaison (1 à 4 écritures) dont la
  *     somme des mouvements nets redonne exactement l'écart, au centime —
  *     un écart peut être composé de PLUSIEURS écritures erronées, pas
@@ -75,6 +84,9 @@ export interface ResolutionEcart {
   /** Nombre d'écritures soldées par lettrage (opposé exact) — se
    *  compensent entre elles, pas à corriger. */
   nbSoldees: number;
+  /** Nombre d'écritures soldées par le lettrage SAGE (groupes équilibrés) —
+   *  régularisées dans Sage, exclues du vivier avant la compensation. */
+  nbLettreesSage: number;
 }
 
 /** Signature d'une combinaison : ses montants triés. Sert à dédupliquer les
@@ -219,32 +231,43 @@ function chercherTaille(
 }
 
 /** Résout un écart de famille (méthode du comptable) :
- *  1. lettrage par montants exactement opposés → pièces soldées marquées
+ *  1. lettrage SAGE : les pièces régularisées dans Sage (groupes de lettrage
+ *     équilibrés, marquées `lettreeSage` par l'analyse) sont exclues — elles
+ *     ne sont jamais candidates, même si leur net participe à l'écart ;
+ *  2. lettrage par montants exactement opposés → pièces soldées marquées
  *     `lettree` (elles se compensent, jamais candidates) ;
- *  2. recherche de la plus petite combinaison (1 à 4 écritures) parmi les
+ *  3. recherche de la plus petite combinaison (1 à 4 écritures) parmi les
  *     NON soldées dont la somme redonne exactement l'écart de la feuille ;
  *     si les RAN non considérés (462/467/512/513) empêchent l'égalité
  *     exacte, retente sur l'écart hors RAN non considérés (« hors_ran ») ;
- *  3. au plus UNE solution retenue (la plus plausible), seules ses écritures
+ *  4. au plus UNE solution retenue (la plus plausible), seules ses écritures
  *     sont marquées `dansCombinaison` ; les variantes équivalentes sont
  *     comptées (nbTotal) ET collectées (variantes, la retenue d'abord) pour
  *     un rapprochement honnête dans Sage quand l'attribution est ambiguë ;
- *  4. sans combinaison : échec honnête — l'écart est le résidu des écritures
+ *  5. sans combinaison : échec honnête — l'écart est le résidu des écritures
  *     non soldées, renvoyé avec leurs nombres (nbNonSoldees / nbSoldees). */
 export function resoudreEcartFamille(
   pieces: PieceEcart[],
   ecartFeuille: number,
   ranNonConsidere: number,
 ): ResolutionEcart {
-  // État frais : les marques d'un appel précédent ne doivent pas subsister.
+  // État frais : les marques d'un appel précédent ne doivent pas subsister
+  // (lettreeSage est une donnée Sage, pas un état du solveur : conservée).
   for (const p of pieces) {
     p.lettree = false;
     p.dansCombinaison = false;
   }
 
-  // 1. Lettrage : les pièces d'exact montant opposé se compensent.
-  lettrerParMontant(pieces);
-  const vivier = pieces.filter((p) => !p.lettree);
+  // 1. Lettrage SAGE : les pièces régularisées dans Sage sortent du vivier.
+  //    Leur net reste dans le rapprochement global (Σ pièces = écart hors
+  //    RAN non considérés) mais elles ne peuvent pas être désignées.
+  const nbLettreesSage = pieces.filter((p) => p.lettreeSage).length;
+  const vivier0 = pieces.filter((p) => !p.lettreeSage);
+
+  // 2. Lettrage par montants exactement opposés : les pièces restantes se
+  //    compensent 2 à 2.
+  lettrerParMontant(vivier0);
+  const vivier = vivier0.filter((p) => !p.lettree);
   const nbSoldees = pieces.length - vivier.length;
   const echec: ResolutionEcart = {
     solutions: [],
@@ -253,6 +276,7 @@ export function resoudreEcartFamille(
     echec: true,
     nbNonSoldees: vivier.length,
     nbSoldees,
+    nbLettreesSage,
   };
 
   const vals = vivier.map((p) => cents(p.net));
@@ -304,9 +328,10 @@ export function resoudreEcartFamille(
         echec: false,
         nbNonSoldees: vivier.length,
         nbSoldees,
+        nbLettreesSage,
       };
     }
   }
-  // 4. Échec honnête : l'écart est le résidu des écritures non soldées.
+  // 5. Échec honnête : l'écart est le résidu des écritures non soldées.
   return echec;
 }

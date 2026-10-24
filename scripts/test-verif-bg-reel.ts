@@ -188,18 +188,24 @@ for (const f of reelles) {
   const somme = f.pieces.reduce((t, p) => t + p.net, 0);
   const rapproche = Math.abs(somme + f.ranNonConsidere - f.ecart) < 0.02;
   const tousNetNonNul = f.pieces.every((p) => Math.abs(p.net) >= 0.01);
-  // Tri : non soldées d'abord (elles portent l'écart), puis soldées par
-  // lettrage — |net| décroissant dans chaque groupe.
+  // Tri : non soldées (rang 0) d'abord, puis soldées par lettrage Sage
+  // (rang 1, preuve), puis compensées (rang 2, opposé exact) — |net|
+  // décroissant dans chaque groupe.
+  const rangSolde = (p: { lettree?: boolean; lettreeSage?: boolean }) =>
+    p.lettreeSage ? 1 : p.lettree ? 2 : 0;
   const triees = f.pieces.every((p, i) => {
     if (i === 0) return true;
     const prev = f.pieces[i - 1]!;
-    if (Number(prev.lettree ?? false) !== Number(p.lettree ?? false)) return !prev.lettree; // transition autorisée : non soldée → soldée
+    if (rangSolde(prev) !== rangSolde(p)) return rangSolde(prev) < rangSolde(p); // transition autorisée : non soldée → Sage → compensée
     return Math.abs(prev.net) >= Math.abs(p.net);
   });
-  // Lettrage : une écriture soldée (montant exactement opposé à une autre)
-  // n'est JAMAIS candidate de la combinaison — elle se compense.
-  const lettrageOk = f.pieces.every((p) => !(p.lettree && p.dansCombinaison));
-  // Σ des non soldées (le vivier de la recherche) + RAN non considérés = écart.
+  // Lettrage : une écriture soldée (lettrage Sage ou montant exactement
+  // opposé) n'est JAMAIS candidate de la combinaison.
+  const lettrageOk = f.pieces.every(
+    (p) => !(p.lettree && p.dansCombinaison) && !(p.lettreeSage && p.dansCombinaison),
+  );
+  // Σ des pièces non compensées (non soldées + soldées Sage, dont les
+  // compensées s'annulent entre elles) + RAN non considérés = écart.
   const sommeNonSold = f.pieces.filter((p) => !p.lettree).reduce((t, p) => t + p.net, 0);
   const rapprocheLettrage = Math.abs(sommeNonSold + f.ranNonConsidere - f.ecart) < 0.02;
   // Aucune pièce RAN listée ne doit porter un net sur 462/467/512/513 :
@@ -213,8 +219,10 @@ for (const f of reelles) {
   const roles: Record<string, number> = {};
   for (const p of f.pieces) roles[p.role] = (roles[p.role] ?? 0) + 1;
   const nbSold = f.pieces.filter((p) => p.lettree).length;
+  const nbSage = f.pieces.filter((p) => p.lettreeSage).length;
+  const nbVivier = f.pieces.length - nbSold - nbSage;
   console.log(
-    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} (non soldées ${String(f.pieces.length - nbSold).padStart(4)}, soldées ${String(nbSold).padStart(4)}) | Σ non sold.=${sommeNonSold.toFixed(2).padStart(13)} | RAN non cons.=${f.nbRanNonConsidere} (${f.ranNonConsidere.toFixed(2)}) | ${rapproche && rapprocheLettrage ? "Σ+RAN=écart ✓" : "RAPPROCHEMENT DIFF"}${tousNetNonNul ? "" : " | NET NUL !"}${triees ? "" : " | MAL TRIÉ"}${ranOk ? "" : " | RAN 462/467 LISTÉ !"}${lettrageOk ? "" : " | SOLDÉE DANS COMBINAISON !"} | roles=${JSON.stringify(roles)}`,
+    `${f.nom.padEnd(22)} écart=${f.ecart.toFixed(2).padStart(13)} | pièces=${String(f.pieces.length).padStart(5)} (non soldées ${String(nbVivier).padStart(4)}, soldées Sage ${String(nbSage).padStart(4)}, compensées ${String(nbSold).padStart(4)}) | Σ vivier+Sage=${sommeNonSold.toFixed(2).padStart(13)} | RAN non cons.=${f.nbRanNonConsidere} (${f.ranNonConsidere.toFixed(2)}) | ${rapproche && rapprocheLettrage ? "Σ+RAN=écart ✓" : "RAPPROCHEMENT DIFF"}${tousNetNonNul ? "" : " | NET NUL !"}${triees ? "" : " | MAL TRIÉ"}${ranOk ? "" : " | RAN 462/467 LISTÉ !"}${lettrageOk ? "" : " | SOLDÉE DANS COMBINAISON !"} | roles=${JSON.stringify(roles)}`,
   );
   for (const p of f.pieces.filter((p) => p.role === "a_nouveaux").slice(0, 3)) {
     console.log(
@@ -322,22 +330,56 @@ for (const f of reelles) {
 }
 console.log(`Combinaisons : ${cOK} OK, ${cKO} KO sur ${reelles.length} familles réelles`);
 
-// BOOST (cas de l'utilisateur) : après lettrage (420 écritures soldées 2 à 2
-// par montant exactement opposé), l'écart -186 186,80 est le résidu des 132
+// BOOST (cas de l'utilisateur) : après lettrage Sage (276 écritures
+// régularisées dans Sage, jamais candidates) et compensation (4 écritures
+// d'exact montant opposé), l'écart -186 186,80 est le résidu des 272
 // écritures non soldées — aucune combinaison de 1 à 4 ne l'explique, et les
 // fausses pistes mélangeant BOOST + JBS + JBU + SANLAMALLIANZ ont disparu.
 const boost = reelles.find((f) => f.nom === "BOOST")!;
+const nbSageBoost = boost.pieces.filter((p) => p.lettreeSage).length;
 const nbSoldBoost = boost.pieces.filter((p) => p.lettree).length;
-const nbNonSoldBoost = boost.pieces.length - nbSoldBoost;
+const nbNonSoldBoost = boost.pieces.filter((p) => !p.lettree && !p.lettreeSage).length;
 const sommeNonSoldBoost = boost.pieces.filter((p) => !p.lettree).reduce((t, p) => t + p.net, 0);
 const boostOk =
   boost.combinaisonEchec &&
   boost.combinaisons.length === 0 &&
-  nbSoldBoost === 420 &&
-  nbNonSoldBoost === 132 &&
+  nbSageBoost === 276 &&
+  nbSoldBoost === 4 &&
+  nbNonSoldBoost === 272 &&
   Math.abs(sommeNonSoldBoost - boost.ecart) < 0.02;
 console.log(
-  `BOOST résidu non soldé : échec honnête ${boost.combinaisonEchec ? "OK" : "KO"}, ${nbSoldBoost} soldées / ${nbNonSoldBoost} non soldées, Σ non soldées = ${sommeNonSoldBoost.toFixed(2)} = écart ${boost.ecart.toFixed(2)} : ${boostOk ? "OK" : "KO"}`,
+  `BOOST résidu non soldé : échec honnête ${boost.combinaisonEchec ? "OK" : "KO"}, ${nbSageBoost} soldées Sage / ${nbSoldBoost} compensées / ${nbNonSoldBoost} non soldées, Σ vivier+Sage = ${sommeNonSoldBoost.toFixed(2)} = écart ${boost.ecart.toFixed(2)} : ${boostOk ? "OK" : "KO"}`,
+);
+
+// EVIOSYS (cas de l'utilisateur, 24/10) : les règlements CAMUSAT BOAOMM sont
+// soldés par lettrage Sage (volet 401000 lettré avec les pièces TIERS de
+// facturation — codes X/Z/AA… visibles dans l'export Sage) : ils ne doivent
+// plus JAMAIS être désignés, et la famille passe en échec honnête (l'écart
+// est le résidu structurel, pas ces règlements).
+const eviosys = reelles.find((f) => f.nom === "EVIOSYS")!;
+const reglementsEVIOSYS = eviosys.pieces.filter(
+  (p) =>
+    p.journal === "BOAOMM" && ["4191", "7149", "6132", "8131", "7130", "10397"].includes(p.piece),
+);
+const eviosysOk =
+  eviosys.combinaisonEchec &&
+  eviosys.combinaisons.length === 0 &&
+  reglementsEVIOSYS.length >= 3 &&
+  reglementsEVIOSYS.every((p) => p.lettreeSage && !p.dansCombinaison && !p.lettree);
+console.log(
+  `EVIOSYS : échec honnête ${eviosys.combinaisonEchec ? "OK" : "KO"} ; règlements BOAOMM lettrés Sage : ${reglementsEVIOSYS.map((p) => `${p.piece}${p.lettreeSage ? " ✓soldéeSage" : " ✗"}`).join(", ")} : ${eviosysOk ? "OK" : "KO"}`,
+);
+
+// EASY TECH : l'ancienne combinaison accusait 2 écritures en fait soldées
+// dans Sage (BOAEAS 6333/9615) — la nouvelle combinaison est UNIQUE et sans
+// aucune écriture régularisée.
+const easyTech = reelles.find((f) => f.nom === "EASY TECH")!;
+const easyTechOk =
+  easyTech.combinaisons.length === 1 &&
+  easyTech.nbVariantesCombinaison === 1 &&
+  easyTech.combinaisons[0]!.pieces.every((p) => !p.lettreeSage && !p.lettree);
+console.log(
+  `EASY TECH : combinaison unique sans écriture soldée : ${easyTechOk ? "OK" : "KO"} (${easyTech.combinaisons[0]?.pieces.map((p) => p.piece).join(" + ") ?? "aucune"})`,
 );
 
 // Cas de référence du comptable : l'écart 90 000 de la famille TOM.

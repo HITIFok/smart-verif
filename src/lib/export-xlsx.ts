@@ -57,7 +57,7 @@ function mettreEnForme(
 function detailCombinaison(f: AnalysisResult["familles"][number]): string {
   if (f.combinaisons.length === 0)
     return f.combinaisonEchec
-      ? `(résidu des écritures non soldées — lettrage : ${f.pieces.filter((p) => !p.lettree).length} non soldée(s) / ${f.pieces.filter((p) => p.lettree).length} soldée(s))`
+      ? `(résidu des écritures non soldées — lettrage : ${f.pieces.filter((p) => !p.lettree && !p.lettreeSage).length} non soldée(s) / ${f.pieces.filter((p) => p.lettreeSage).length} soldée(s) Sage / ${f.pieces.filter((p) => p.lettree).length} compensée(s))`
       : "";
   const c = f.combinaisons[0]!;
   const pieces = c.pieces.map((p) => `${p.journal} ${p.piece} (${p.net.toFixed(2)})`).join(" + ");
@@ -92,8 +92,9 @@ export function exportAnomalies(result: AnalysisResult) {
     "Solde trésorerie": f.tresorerie,
     "Vérification (écart)": f.ecart,
     Statut: f.soldee ? "Soldée" : "Écart à corriger",
-    "Pièces à corriger": f.pieces.filter((p) => !p.lettree).length,
-    "Écritures soldées (lettrage)": f.pieces.filter((p) => p.lettree).length,
+    "Pièces à corriger": f.pieces.filter((p) => !p.lettree && !p.lettreeSage).length,
+    "Écritures soldées (lettrage Sage)": f.pieces.filter((p) => p.lettreeSage).length,
+    "Écritures compensées (montant opposé)": f.pieces.filter((p) => p.lettree).length,
     "Nb pièces RAN non considérés": f.nbRanNonConsidere,
     "Total RAN non considérés": f.ranNonConsidere,
     ...(f.soldee
@@ -116,11 +117,11 @@ export function exportAnomalies(result: AnalysisResult) {
   // écritures qu'il faut corriger dans Sage pour solder la famille. Règle
   // RAN : seuls les à-nouveaux portant sur 401000, 460 ou 411 sont listés ;
   // les RAN 462/467, 512/513 ou divers sont résumés sur « Vérification familles ».
-  // Lettrage : les écritures soldées (montant exactement opposé) se
-  // compensent 2 à 2 et ne sont pas à corriger — elles sont marquées.
-  // « Variantes (n°) » : les décompositions exactes contenant la pièce —
-  // en attribution ambiguïe, la pièce peut apparaître dans plusieurs
-  // variantes candidates (1 = la présentée, la plus plausible).
+  // Lettrage : les écritures soldées ne sont pas à corriger — soldées par le
+  // lettrage Sage (preuve : groupes équilibrés) ou compensées (montant
+  // exactement opposé). « Variantes (n°) » : les décompositions exactes
+  // contenant la pièce — en attribution ambiguïe, la pièce peut apparaître
+  // dans plusieurs variantes candidates (1 = la présentée, la plus plausible).
   const piecesFamilles = result.familles
     .filter((f) => !f.soldee)
     .flatMap((f) => {
@@ -148,7 +149,8 @@ export function exportAnomalies(result: AnalysisResult) {
         "Tous comptes": p.comptesTous,
         "Mouvement net": p.net,
         Anomalie: p.anomalie ? "Oui" : "",
-        "Soldée (lettrage)": p.lettree ? "Oui" : "",
+        "Soldée (lettrage Sage)": p.lettreeSage ? "Oui" : "",
+        "Compensée (montant opposé)": p.lettree ? "Oui" : "",
         "Dans combinaison (candidate si ambigu)": p.dansCombinaison ? "Oui" : "",
         "Variantes (n°)": variantesDe.get(clePiece(p))?.join(", ") ?? "",
         "Aussi dans": p.aussiDans?.join(", ") ?? "",
@@ -161,11 +163,12 @@ export function exportAnomalies(result: AnalysisResult) {
   );
 
   // Combinaisons exactes d'écritures erronées (méthode du comptable) :
-  // lettrage d'abord (les écritures d'exact montant opposé se compensent),
-  // puis plus petite combinaison (1 à 4) parmi les NON soldées dont la
-  // somme redonne exactement l'écart — au plus UNE solution retenue par
-  // famille (les variantes équivalentes sont alternatives), sinon échec
-  // honnête : l'écart est le résidu des écritures non soldées.
+  // lettrage Sage d'abord (pièces régularisées jamais candidates), puis
+  // compensation des montants exactement opposés, puis plus petite
+  // combinaison (1 à 4) parmi les NON soldées dont la somme redonne
+  // exactement l'écart — au plus UNE solution retenue par famille (les
+  // variantes équivalentes sont alternatives), sinon échec honnête :
+  // l'écart est le résidu des écritures non soldées.
   const combinaisons = result.familles
     .filter((f) => !f.soldee)
     .flatMap((f): Record<string, string | number>[] => {
@@ -174,8 +177,9 @@ export function exportAnomalies(result: AnalysisResult) {
         Membres: f.membres.join(" + "),
         "Écart feuille": f.ecart,
         "RAN non considérés": f.ranNonConsidere,
-        "Non soldées (lettrage)": f.pieces.filter((p) => !p.lettree).length,
-        "Soldées (lettrage)": f.pieces.filter((p) => p.lettree).length,
+        "Non soldées": f.pieces.filter((p) => !p.lettree && !p.lettreeSage).length,
+        "Soldées (lettrage Sage)": f.pieces.filter((p) => p.lettreeSage).length,
+        "Compensées (montant opposé)": f.pieces.filter((p) => p.lettree).length,
       };
       const c = f.combinaisons[0];
       if (!c) {
@@ -365,7 +369,8 @@ export function exportAnomalies(result: AnalysisResult) {
       "Vérification (écart)": 20,
       Statut: 16,
       "Pièces à corriger": 11,
-      "Écritures soldées (lettrage)": 13,
+      "Écritures soldées (lettrage Sage)": 14,
+      "Écritures compensées (montant opposé)": 14,
       "Nb pièces RAN non considérés": 13,
       "Total RAN non considérés": 20,
       "Écritures désignées (combinaison = écart)": 80,
@@ -389,7 +394,8 @@ export function exportAnomalies(result: AnalysisResult) {
       "Tous comptes": 34,
       "Mouvement net": 15,
       Anomalie: 9,
-      "Soldée (lettrage)": 10,
+      "Soldée (lettrage Sage)": 12,
+      "Compensée (montant opposé)": 12,
       "Dans combinaison (candidate si ambigu)": 14,
       "Variantes (n°)": 13,
       "Aussi dans": 28,
@@ -416,8 +422,9 @@ export function exportAnomalies(result: AnalysisResult) {
       Membres: 40,
       "Écart feuille": 16,
       "RAN non considérés": 18,
-      "Non soldées (lettrage)": 12,
-      "Soldées (lettrage)": 12,
+      "Non soldées": 12,
+      "Soldées (lettrage Sage)": 14,
+      "Compensées (montant opposé)": 14,
       Portée: 22,
       "Nb écritures": 11,
       Écritures: 90,

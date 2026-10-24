@@ -176,12 +176,58 @@ export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
         libelle: str(pick(r, "libellé", "libelle")),
         debit: num(pick(r, "débit", "debit")),
         credit: num(pick(r, "crédit", "credit")),
+        // Code de lettrage Sage (colonne « Lettrage montant ») : preuve que
+        // l'opération est soldée. Absent ("" ) sur les lignes non lettrées
+        // (banques, charges, écritures en cours) — on ne stocke que s'il
+        // existe pour garder les lignes légères.
+        ...(str(pick(r, "lettrage")) ? { lettrage: str(pick(r, "lettrage")) } : {}),
       };
     })
     .filter((l) => l.compte);
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Lettrage SAGE réel (colonne « Lettrage montant » du brouillard) : les lignes
+ * partageant le même (compte général, compte tiers, code) forment un groupe de
+ * lettrage ; un groupe dont la somme Débit − Crédit est nulle prouve que
+ * l'opération est soldée dans Sage. Renvoie la map groupe → équilibré ?
+ * (vide si le brouillard ne porte aucun code de lettrage).
+ */
+function groupesLettrageSage(lignes: EntryLine[]): Map<string, boolean> {
+  const groupes = new Map<string, EntryLine[]>();
+  for (const l of lignes) {
+    if (!l.lettrage) continue;
+    const k = `${l.compte}|${l.tiers}|${l.lettrage}`;
+    const arr = groupes.get(k);
+    if (arr) arr.push(l);
+    else groupes.set(k, [l]);
+  }
+  const equilibres = new Map<string, boolean>();
+  for (const [k, ls] of groupes) {
+    equilibres.set(k, Math.round(ls.reduce((t, l) => t + l.debit - l.credit, 0) * 100) === 0);
+  }
+  return equilibres;
+}
+
+/** Pièce soldée par le lettrage SAGE : au moins une ligne lettrée, toutes les
+ *  lignes lettrées dans des groupes équilibrés, et toutes les lignes sans
+ *  code bancaires (512/513 — le volet trésorerie d'un règlement n'est jamais
+ *  lettré). C'est la preuve comptable que la pièce est régularisée : elle ne
+ *  doit jamais être désignée comme écriture à corriger. */
+function pieceSoldeeSage(group: EntryLine[], equilibres: Map<string, boolean>): boolean {
+  let nbLettrées = 0;
+  for (const l of group) {
+    if (l.lettrage) {
+      if (!equilibres.get(`${l.compte}|${l.tiers}|${l.lettrage}`)) return false;
+      nbLettrées++;
+    } else if (!l.compte.startsWith("512") && !l.compte.startsWith("513")) {
+      return false;
+    }
+  }
+  return nbLettrées > 0;
+}
 
 export function analyse(
   lignes: EntryLine[],
@@ -600,6 +646,15 @@ export function analyse(
   // dans Sage, pas des écritures prouvées erronées.
   const famillesReelles = familles.filter((f) => !f.soldee);
   if (famillesReelles.length) {
+    // Lettrage SAGE réel : groupes (compte, tiers, code) équilibrés, puis
+    // statut « soldée Sage » par pièce (une seule fois pour tout le brouillard).
+    const equilibresSage = groupesLettrageSage(lignes);
+    const soldeeSagePiece = new Map<string, boolean>();
+    if (equilibresSage.size) {
+      for (const [key, group] of pieces) {
+        if (pieceSoldeeSage(group, equilibresSage)) soldeeSagePiece.set(key, true);
+      }
+    }
     const cleAnomalies = new Set(
       anomalies.filter((a) => a.journal || a.piece).map((a) => `${a.journal}|${a.piece}|${a.date}`),
     );
@@ -708,6 +763,7 @@ export function analyse(
           net: v.net,
           role: roleDe(parts[0] ?? "", group),
           anomalie: cleAnomalies.has(key),
+          ...(soldeeSagePiece.has(key) ? { lettreeSage: true } : {}),
           ...(famillesParPiece.get(key)!.length > 1
             ? {
                 aussiDans: famillesParPiece.get(key)!.filter((n) => n !== sf.f.nom),
@@ -739,13 +795,11 @@ export function analyse(
       // (la solution retenue marque ses pièces dansCombinaison, le lettrage
       // marque les pièces soldées lettree — dans les deux cas sur la liste)
       // Tri « comme un comptable » : les écritures non soldées (contributeurs
-      // de l'écart, à examiner) d'abord, les écritures soldées par lettrage
-      // ensuite — |net| décroissant dans chaque groupe.
-      list.sort(
-        (a, b) =>
-          Number(a.lettree ?? false) - Number(b.lettree ?? false) ||
-          Math.abs(b.net) - Math.abs(a.net),
-      );
+      // de l'écart, à examiner) d'abord, puis les soldées par lettrage SAGE
+      // (preuve la plus forte), puis les soldées par compensation (opposé
+      // exact) — |net| décroissant dans chaque groupe.
+      const rangSolde = (p: PieceEcart) => (p.lettreeSage ? 1 : p.lettree ? 2 : 0);
+      list.sort((a, b) => rangSolde(a) - rangSolde(b) || Math.abs(b.net) - Math.abs(a.net));
     }
 
     // À-nouveaux de tiers hors familles : pièces RAN portant sur 401000, 460

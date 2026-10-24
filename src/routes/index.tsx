@@ -16,6 +16,7 @@ import type {
   AnalysisResult,
   AnomalyType,
   FamilleVerif,
+  PieceEcart,
   RanTiersPiece,
 } from "@/lib/analysis-types";
 import { PIECE_ROLE_LABELS } from "@/lib/analysis-types";
@@ -1065,10 +1066,18 @@ function EcartsFamilles({
             pour le rapprochement.
           </li>
           <li>
-            <span className="font-semibold">Lettrage</span> : les écritures d'exact montant opposé
-            se compensent 2 à 2 (le volet banque et le volet tiers d'une même opération, un compte à
-            compte entrant/sortant) — elles sont « soldées », marquées ainsi, et ne peuvent pas
-            expliquer l'écart à elles seules.
+            <span className="font-semibold">Lettrage Sage</span> : une pièce dont toutes les lignes
+            lettrées appartiennent à des groupes de lettrage équilibrés dans Sage (compte + tiers +
+            code, colonne « Lettrage montant » du brouillard) et dont les lignes sans code sont
+            bancaires est régularisée (ex. le règlement dont le volet 401000 est lettré avec la
+            pièce TIERS de facturation) — elle n'est jamais candidate, même si son volet bancaire
+            participe arithmétiquement à l'écart.
+          </li>
+          <li>
+            <span className="font-semibold">Compensation</span> : les écritures restantes d'exact
+            montant opposé se compensent 2 à 2 (le volet banque et le volet tiers d'une même
+            opération, un compte à compte entrant/sortant) — elles sont « soldées », marquées ainsi,
+            et ne peuvent pas expliquer l'écart à elles seules.
           </li>
           <li>
             <span className="font-semibold">Détection exacte</span> : parmi les écritures non
@@ -1083,7 +1092,7 @@ function EcartsFamilles({
           <li>
             <span className="font-semibold">Sans combinaison exacte</span> : l'écart est le résidu
             des écritures non soldées, présentées par contribution décroissante — pas de fausse
-            piste, les soldées se compensent et ne se corrigent pas.
+            piste, les soldées (lettrage Sage, compensation) ne se corrigent pas.
           </li>
         </ol>
       </div>
@@ -1207,19 +1216,22 @@ function CarteFamilleEcart({
   onToggle: () => void;
 }) {
   const [limit, setLimit] = useState(30);
-  // Par défaut, les écritures soldées par lettrage (montant exactement
-  // opposé) sont masquées : elles se compensent entre elles et ne sont pas
-  // à corriger — le comptable veut voir les non soldées d'abord.
-  const [masquerSoldees, setMasquerSoldees] = useState(() => f.pieces.some((p) => !p.lettree));
+  // Soldées : par lettrage SAGE (preuve : groupes équilibrés) ou par
+  // compensation (montant exactement opposé). Dans les deux cas elles ne
+  // sont pas à corriger — le comptable veut voir les non soldées d'abord.
+  const estSoldee = (p: PieceEcart) => p.lettreeSage || p.lettree;
+  const [masquerSoldees, setMasquerSoldees] = useState(() => f.pieces.some((p) => !estSoldee(p)));
   const somme = f.pieces.reduce((t, p) => t + p.net, 0);
   // Rapprochement : Σ pièces à corriger + RAN non considérés (462/467,
   // 512/513, comptes divers) = écart de la feuille de vérification.
   const verifiee = Math.abs(somme + f.ranNonConsidere - f.ecart) < 0.02;
-  // Lettrage : soldées (opposé exact) vs non soldées (vivier de la recherche
-  // et, à défaut de combinaison, contributeurs de l'écart).
-  const nbNonSoldees = f.pieces.filter((p) => !p.lettree).length;
+  // Lettrage : non soldées (vivier de la recherche et, à défaut de
+  // combinaison, contributeurs de l'écart) vs soldées (Sage / compensation).
+  const nbNonSoldees = f.pieces.filter((p) => !estSoldee(p)).length;
   const nbSoldees = f.pieces.length - nbNonSoldees;
-  const sommeNonSoldees = f.pieces.filter((p) => !p.lettree).reduce((t, p) => t + p.net, 0);
+  const nbSoldeesSage = f.pieces.filter((p) => p.lettreeSage).length;
+  const nbCompensees = nbSoldees - nbSoldeesSage;
+  const sommeNonSoldees = f.pieces.filter((p) => !estSoldee(p)).reduce((t, p) => t + p.net, 0);
   // Décomposition de l'écart : LA combinaison exacte retenue (au plus une).
   // Quand PLUSIEURS décompositions exactes coexistent (nbVariantes > 1),
   // l'attribution est AMBIGUÏE : les pièces citées sont des candidats à
@@ -1228,7 +1240,7 @@ function CarteFamilleEcart({
   const solution = f.combinaisons[0];
   const nbPiecesCombinaison = solution?.pieces.length ?? 0;
   const ambigue = (f.nbVariantesCombinaison ?? 0) > 1;
-  const visibles = masquerSoldees ? f.pieces.filter((p) => !p.lettree) : f.pieces;
+  const visibles = masquerSoldees ? f.pieces.filter((p) => !estSoldee(p)) : f.pieces;
   return (
     <div className="panel overflow-hidden">
       <button
@@ -1384,9 +1396,22 @@ function CarteFamilleEcart({
                 </div>
               )}
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Les {nbSoldees.toLocaleString("fr-FR")} autre(s) écriture(s) soldée(s) par lettrage
-                (montant exactement opposé) se compensent entre elles : elles ne sont pas à
-                corriger.
+                {nbSoldeesSage > 0 && (
+                  <>
+                    Les {nbSoldeesSage.toLocaleString("fr-FR")} écriture(s) soldée(s) par le
+                    lettrage Sage sont régularisées dans Sage (groupes de lettrage équilibrés, volet
+                    401000/tiers lettré) : pas à corriger, même si leur volet bancaire participe à
+                    l'écart.
+                  </>
+                )}
+                {nbSoldeesSage > 0 && nbCompensees > 0 && " "}
+                {nbCompensees > 0 && (
+                  <>
+                    Les {nbCompensees.toLocaleString("fr-FR")} autre(s) écriture(s) soldée(s) par
+                    compensation (montant exactement opposé) se compensent entre elles : pas à
+                    corriger.
+                  </>
+                )}
               </p>
             </div>
           ) : f.combinaisonEchec ? (
@@ -1395,10 +1420,11 @@ function CarteFamilleEcart({
                 Écart = résidu des écritures non soldées
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Après lettrage, {nbSoldees.toLocaleString("fr-FR")} écriture(s) se compensent 2 à 2
-                (montant exactement opposé, pas à corriger) et{" "}
-                {nbNonSoldees.toLocaleString("fr-FR")} restent non soldées (Σ ={" "}
-                {fmt(sommeNonSoldees)}). Aucune combinaison de 1 à 4 écritures non soldées ne
+                Après lettrage, {nbSoldeesSage.toLocaleString("fr-FR")} écriture(s) sont soldées
+                dans Sage (lettrage équilibré, régularisées — jamais candidates) et{" "}
+                {nbCompensees.toLocaleString("fr-FR")} se compensent 2 à 2 (montant exactement
+                opposé, pas à corriger) ; {nbNonSoldees.toLocaleString("fr-FR")} restent non soldées
+                (Σ = {fmt(sommeNonSoldees)}). Aucune combinaison de 1 à 4 écritures non soldées ne
                 redonne exactement l'écart de {fmt(f.ecart)} : ces écritures se corrigent ensemble,
                 pas par une sous-combinaison arbitraire — les examiner dans Sage, contribution la
                 plus forte d'abord (listées ci-dessous).
@@ -1408,9 +1434,10 @@ function CarteFamilleEcart({
           <p className="px-4 pt-3 text-xs text-muted-foreground">
             Pièces dont le mouvement net sur le périmètre de la famille ({f.membres.join(", ")})
             n'est pas nul, triées : non soldées d'abord (elles portent l'écart), puis soldées par
-            lettrage. Règle RAN : seuls les à-nouveaux portant sur 401000, 460 ou 411 sont listés
-            ici ; les {f.nbRanNonConsidere.toLocaleString("fr-FR")} pièce(s) RAN 462/467, 512/513 ou
-            divers (total {fmt(f.ranNonConsidere)}) ne sont pas des écritures à corriger et sont
+            lettrage Sage, puis compensées (montant opposé). Règle RAN : seuls les à-nouveaux
+            portant sur 401000, 460 ou 411 sont listés ici ; les{" "}
+            {f.nbRanNonConsidere.toLocaleString("fr-FR")} pièce(s) RAN 462/467, 512/513 ou divers
+            (total {fmt(f.ranNonConsidere)}) ne sont pas des écritures à corriger et sont
             réintégrées pour rapprocher la somme : {fmt(somme)} + {fmt(f.ranNonConsidere)} ={" "}
             {fmt(f.ecart)}.
           </p>
@@ -1423,8 +1450,8 @@ function CarteFamilleEcart({
               className="mx-4 mt-3 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:border-accent"
             >
               {masquerSoldees
-                ? `Afficher aussi les ${nbSoldees.toLocaleString("fr-FR")} écriture(s) soldée(s) (lettrage)`
-                : `Masquer les ${nbSoldees.toLocaleString("fr-FR")} écriture(s) soldée(s) (lettrage)`}
+                ? `Afficher aussi les ${nbSoldees.toLocaleString("fr-FR")} écriture(s) soldée(s) (Sage / compensation)`
+                : `Masquer les ${nbSoldees.toLocaleString("fr-FR")} écriture(s) soldée(s) (Sage / compensation)`}
             </button>
           )}
           <div className="mt-2 divide-y divide-border">
@@ -1436,7 +1463,7 @@ function CarteFamilleEcart({
                     ? ambigue
                       ? "border-l-2 border-warning bg-warning/10"
                       : "border-l-2 border-destructive bg-destructive/5"
-                    : p.lettree
+                    : estSoldee(p)
                       ? "border-l-2 border-transparent opacity-60"
                       : ""
                 }`}
@@ -1479,12 +1506,20 @@ function CarteFamilleEcart({
                         {ambigue ? "candidate" : "erronée"}
                       </span>
                     )}
+                    {p.lettreeSage && (
+                      <span
+                        className="ml-2 rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-success"
+                        title="Soldée par le lettrage Sage : toutes les lignes lettrées de la pièce appartiennent à des groupes de lettrage équilibrés (compte + tiers + code) et ses lignes sans code sont bancaires — pièce régularisée dans Sage, pas à corriger."
+                      >
+                        soldée Sage
+                      </span>
+                    )}
                     {p.lettree && (
                       <span
                         className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground"
-                        title="Soldée par lettrage : une autre écriture porte exactement le montant opposé — elles se compensent, pas à corriger."
+                        title="Soldée par compensation : une autre écriture porte exactement le montant opposé — elles se compensent, pas à corriger."
                       >
-                        soldée
+                        compensée
                       </span>
                     )}
                     {p.aussiDans && (
