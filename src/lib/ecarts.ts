@@ -25,6 +25,16 @@ import type { CombinaisonEcart, PieceEcart } from "./analysis-types";
  *     toujours d'une seule (ex. 90 000 = 48 000 + 2 000 + 40 000).
  *     500 000 + -313 813,20 = 186 186,80 est aussi « exact » mais absurde
  *     pour un comptable : le lettrage préalable élimine ce bruit.
+ *  4. VRAISEMBLANCE : une combinaison n'est retenue que si les écritures
+ *     impliquées sont d'un ordre de grandeur compatible avec l'écart —
+ *     la somme de leurs |montants| (masse) ne peut pas dépasser 100 fois
+ *     l'écart cherché (plancher 10,00 Ar pour les tout petits écarts).
+ *     Sinon l'égalité au centime est un pur hasard arithmétique sur des
+ *     écritures par ailleurs légitimes (ex. réel SANIFER 24/10 :
+ *     -473 462 + 407 920 + 307 038 - 241 500 = -4,00 alors que l'écart
+ *     -4,00 vient entièrement des RAN non considérés) : désigner ces
+ *     écritures serait une fausse accusation, l'app refuse et déclare
+ *     l'échec honnête.
  *
  * Au plus UNE combinaison est retenue (la plus plausible : écritures
  * suspectes d'abord, masse la plus faible ensuite) et seules SES écritures
@@ -53,6 +63,21 @@ const BUDGET_EXAMENS = 2_000_000;
 /** Plafond de variantes distinctes stockées et exportées (les premières,
  *  les plus plausibles d'abord). nbTotal reste le compte complet. */
 const MAX_VARIANTES = 12;
+
+/** VRAISEMBLANCE : rapport maximal entre la masse d'une combinaison (Σ des
+ *  |montants| de ses écritures) et l'écart cherché. Au-delà, l'égalité
+ *  exacte est un hasard arithmétique sans signification comptable : des
+ *  écritures d'un autre ordre de grandeur ne « expliquent » pas un écart
+ *  minuscule (corriger une écriture de 473 462 changerait l'écart de
+ *  473 462, pas de 4,00). Plancher absolu en centimes (10,00 Ar) pour que
+ *  les tout petits écarts (0,32 + 0,08) restent détectables. */
+const MASSE_RATIO_MAX = 100;
+const MASSE_PLANCHER_CENTS = 1_000;
+
+/** Une combinaison de masse `masse` (centimes) est-elle vraisemblable pour
+ *  une cible `cible` (centimes) ? */
+const massePlausible = (masse: number, cible: number): boolean =>
+  masse <= Math.max(MASSE_RATIO_MAX * Math.abs(cible), MASSE_PLANCHER_CENTS);
 
 /** Conversion en centimes : tout le calcul est en entiers, zéro erreur d'arrondi. */
 const cents = (n: number) => Math.round(n * 100);
@@ -240,12 +265,18 @@ function chercherTaille(
  *     NON soldées dont la somme redonne exactement l'écart de la feuille ;
  *     si les RAN non considérés (462/467/512/513) empêchent l'égalité
  *     exacte, retente sur l'écart hors RAN non considérés (« hors_ran ») ;
- *  4. au plus UNE solution retenue (la plus plausible), seules ses écritures
+ *  4. VRAISEMBLANCE : seules les combinaisons dont la masse (Σ des
+ *     |montants|) est d'un ordre de grandeur compatible avec la cible sont
+ *     retenues — une égalité exacte obtenue avec des écritures 100 fois
+ *     plus grosses que l'écart est un hasard arithmétique, pas une
+ *     explication (l'app refuse de désigner des écritures légitimes) ;
+ *  5. au plus UNE solution retenue (la plus plausible), seules ses écritures
  *     sont marquées `dansCombinaison` ; les variantes équivalentes sont
  *     comptées (nbTotal) ET collectées (variantes, la retenue d'abord) pour
  *     un rapprochement honnête dans Sage quand l'attribution est ambiguë ;
- *  5. sans combinaison : échec honnête — l'écart est le résidu des écritures
- *     non soldées, renvoyé avec leurs nombres (nbNonSoldees / nbSoldees). */
+ *  6. sans combinaison vraisemblable : échec honnête — l'écart est le
+ *     résidu des écritures non soldées, renvoyé avec leurs nombres
+ *     (nbNonSoldees / nbSoldees). */
 export function resoudreEcartFamille(
   pieces: PieceEcart[],
   ecartFeuille: number,
@@ -293,11 +324,16 @@ export function resoudreEcartFamille(
   for (const { t, portee } of cibles) {
     for (let k = 1; k <= TAILLE_MAX; k++) {
       const brutes = chercherTaille(vals, suspecte, t, k);
-      if (brutes.length === 0) continue;
+      // Vraisemblance : écarter les combinaisons d'un autre ordre de grandeur
+      // que la cible (égalité exacte par pur hasard arithmétique — ex. réel
+      // SANIFER : 4 écritures de ~1,4 M de masse qui « tombent » sur -4,00).
+      // Aucune combinaison vraisemblable à cette taille → taille suivante.
+      const plausibles = brutes.filter((b) => massePlausible(b.masse, t));
+      if (plausibles.length === 0) continue;
       // Ordre « comme un comptable » : le plus d'écritures suspectes d'abord,
       // puis la masse la plus faible (écritures les plus proches de l'écart),
       // puis la signature pour un résultat déterministe.
-      brutes.sort(
+      plausibles.sort(
         (a, b) =>
           b.nbSuspects - a.nbSuspects ||
           a.masse - b.masse ||
@@ -318,13 +354,13 @@ export function resoudreEcartFamille(
       });
       // La solution retenue EST la première variante (même objet) : les deux
       // listes ne peuvent jamais diverger.
-      const variantes = brutes.slice(0, MAX_VARIANTES).map(versCombinaison);
+      const variantes = plausibles.slice(0, MAX_VARIANTES).map(versCombinaison);
       const solution = variantes[0]!;
       for (const p of solution.pieces) p.dansCombinaison = true;
       return {
         solutions: [solution],
         variantes,
-        nbTotal: brutes.length,
+        nbTotal: plausibles.length,
         echec: false,
         nbNonSoldees: vivier.length,
         nbSoldees,

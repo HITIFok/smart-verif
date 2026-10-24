@@ -1,32 +1,35 @@
 /**
  * Test de bout en bout : pipeline réel de l'app (parseVerif + parseBrouillard + analyse)
  * sur les fichiers réels, comparé aux écarts de la feuille « 2026 » du Verif BG.
+ * Données du 24/10/2026 (après les corrections Sage du comptable : TOM 90 000
+ * corrigée — famille soldée, EVIOSYS réduit de -4 606 000 à -976 000).
  */
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 import { analyse, parseBrouillard, parseVerif } from "../src/lib/analyzer";
 
-const VERIF = "/home/z/my-project/upload/Verif BG 21102026.xlsx";
-const BROU = "/home/z/my-project/upload/BROUILLARD 2026 20102026.xlsx";
+const VERIF = "/home/z/my-project/upload/Verif BG 24102026.xlsx";
+const BROU = "/home/z/my-project/upload/BROUILLARD 2026 24102026 VF.xlsx";
 
 // Écarts de référence — feuille 2 (blocs principaux « Vérification » imprimés).
-// ORANGE MONEY : 512600 réattribué à EVIOSYS (formule comptable) -> écart nul.
-// SANLAMALLIANZ COMPAGNIE / ORANGE MONEY : écarts feuille du 21/10, brouillard du 20/10.
+// ORANGE MONEY MADAGASCAR : la banque 512600 est attribuée à EVIOSYS par la
+// formule du comptable (note « Vérification -976 000 » dans le bloc EVIOSYS de
+// la feuille 24/10) -> écart nul côté ORANGE MONEY.
 const REFERENCE: Record<string, number> = {
   HOLCIM: -1169515.72,
   "DHL INTERNATIONAL": -140559044.15,
   "TELMA MONEY": 12212892.44,
   JOVENA: 700000.0,
   MCB: 172800.0,
-  "EASY TECH": 13169572.6,
-  BOOST: -13966804.58,
+  "EASY TECH": 6471782.6,
+  BOOST: -15300244.58,
   LECOFRUIT: 29546020.0,
   "ORANGE MADAGASCAR": 7866303.02,
-  "ORANGE MONEY MADAGASCAR": 0.0,
-  NACRE: -2254237.33,
+  "ORANGE MONEY MADAGASCAR": 0.0, // 512600 attribuée à EVIOSYS (note feuille)
+  NACRE: -2415837.33,
   STAR: 1480139.9,
   "SANLAMALLIANZ AUTOFI": -28185141.44,
-  "SANLAMALLIANZ COMPAGNIE": 15446798.9, // brouillard 20/10 (feuille 21/10 : 15 540 398,90)
+  "SANLAMALLIANZ COMPAGNIE": 15446798.9,
   CONNECTEO: 0.36,
   EDM: -140.0,
 };
@@ -57,18 +60,18 @@ const FAMILLES: Record<string, string[]> = {
   "FIRST IMMO": ["SANKO"],
 };
 
-// Vérifications attendues au niveau famille (notes formules, valeurs brouillard 20/10).
+// Vérifications attendues au niveau famille (notes formules, valeurs brouillard 24/10).
 const FAMILLE_ATTENDU: Record<string, { ecart: number; membres: number }> = {
   "DHL INTERNATIONAL": { ecart: -0.2, membres: 2 },
   FSS: { ecart: 0.0, membres: 2 },
   "TELMA SA": { ecart: 1723184.0, membres: 2 },
   "EASY TECH": { ecart: -710540.0, membres: 2 },
-  "SANIFER = TALYS": { ecart: 2006.0, membres: 7 },
+  "SANIFER = TALYS": { ecart: -4.0, membres: 7 }, // écart entièrement dans les RAN non considérés
   AITS: { ecart: 0.4, membres: 2 },
-  AXIANSS: { ecart: -144058.16, membres: 6 }, // formule exacte de la feuille (H249) — reproduite depuis le brouillard
-  TOM: { ecart: 90000.0, membres: 3 },
+  AXIANSS: { ecart: -54058.16, membres: 6 },
+  TOM: { ecart: 0.0, membres: 3 }, // 90 000 corrigée dans Sage entre le 20/10 et le 24/10
   NACRE: { ecart: 0.0, membres: 4 },
-  EVIOSYS: { ecart: -4606000.0, membres: 3 },
+  EVIOSYS: { ecart: -976000.0, membres: 3 },
   BOOST: { ecart: -186186.8, membres: 3 },
   LECOFRUIT: { ecart: 0.0, membres: 2 },
   SMARTONE: { ecart: 0.0, membres: 2 },
@@ -176,7 +179,7 @@ for (const a of result.anomalies.slice(0, 12)) {
 // ============================================================
 // Écarts de famille réels : pièces concernées (à corriger dans Sage)
 // Règle RAN : seuls les RAN portant sur 401000 / 460 / 411 sont considérés ;
-// les RAN 462/467 (comptes d'attente), 512/513 et divers sont résumés à part
+// les RAN sur les comptes d'attente 462/467, 512/513 et divers sont résumés à part
 // et le rapprochement Σ pièces + RAN non considérés = écart feuille est vérifié.
 // ============================================================
 console.log("\n=== Pièces composant les écarts de famille réels (règle RAN 401000/460/411) ===");
@@ -274,16 +277,13 @@ for (const { f, p } of partagees.slice(0, 5)) {
 // Anomalies croisées avec les pièces d'écart
 const nbAnomalies = reelles.reduce((t, f) => t + f.pieces.filter((p) => p.anomalie).length, 0);
 console.log(`Pièces d'écart aussi signalées comme anomalies : ${nbAnomalies}`);
-console.log(
-  `Stats.piecesAFixer = ${result.stats.piecesAFixer} (attendu ${reelles.reduce((t, f) => t + f.pieces.length, 0)})`,
-);
 
 // ============================================================
 // Combinaisons exactes d'écritures erronées (feuille 2 du Verif BG) :
 // l'écart peut être composé de PLUSIEURS écritures erronées (ex.
 // 90 000 = 48 000 + 2 000 + 40 000) comme d'une seule. L'app détecte la
 // plus petite combinaison de pièces dont la somme redonne exactement
-// l'écart, au centime, et la pièce de référence TOM (90 000) est vérifiée.
+// l'écart, au centime — sous réserve de VRAISEMBLANCE (masse ≤ 100 × écart).
 // ============================================================
 console.log("\n=== Combinaisons exactes d'écritures erronées par famille ===");
 let cOK = 0;
@@ -291,7 +291,8 @@ let cKO = 0;
 for (const f of reelles) {
   if (f.combinaisons.length === 0) {
     // Échec honnête accepté (écart composé de plus de 4 écritures non
-    // soldées) : aucune combinaison annoncée, donc aucune somme fausse.
+    // soldées, ou aucune combinaison VRAISEMBLABLE) : aucune combinaison
+    // annoncée, donc aucune somme fausse.
     if (f.combinaisonEchec && f.nbVariantesCombinaison === 0) cOK++;
     else cKO++;
     console.log(
@@ -316,6 +317,10 @@ for (const f of reelles) {
     const cibleAttendue =
       c.portee === "feuille" ? f.ecart : Math.round((f.ecart - f.ranNonConsidere) * 100) / 100;
     if (Math.abs(c.cible - cibleAttendue) > 0.005) ok = false;
+    // VRAISEMBLANCE : la masse de la combinaison (Σ |nets|) ne peut pas
+    // dépasser 100 fois la cible (plancher 10,00 Ar).
+    const masse = c.pieces.reduce((t, p) => t + Math.abs(p.net), 0);
+    if (masse > Math.max(100 * Math.abs(c.cible), 10)) ok = false;
   }
   if (ok) cOK++;
   else cKO++;
@@ -330,11 +335,12 @@ for (const f of reelles) {
 }
 console.log(`Combinaisons : ${cOK} OK, ${cKO} KO sur ${reelles.length} familles réelles`);
 
-// BOOST (cas de l'utilisateur) : après lettrage Sage (276 écritures
-// régularisées dans Sage, jamais candidates) et compensation (4 écritures
-// d'exact montant opposé), l'écart -186 186,80 est le résidu des 272
-// écritures non soldées — aucune combinaison de 1 à 4 ne l'explique, et les
-// fausses pistes mélangeant BOOST + JBS + JBU + SANLAMALLIANZ ont disparu.
+// BOOST (cas de l'utilisateur) : après lettrage Sage (279 écritures
+// régularisées dans Sage, jamais candidates) et compensation (6 écritures
+// d'exact montant opposé), l'écart -186 186,80 est le résidu des 275
+// écritures non soldées — aucune combinaison vraisemblable de 1 à 4 ne
+// l'explique, et les fausses pistes mélangeant BOOST + JBS + JBU +
+// SANLAMALLIANZ ont disparu.
 const boost = reelles.find((f) => f.nom === "BOOST")!;
 const nbSageBoost = boost.pieces.filter((p) => p.lettreeSage).length;
 const nbSoldBoost = boost.pieces.filter((p) => p.lettree).length;
@@ -343,19 +349,19 @@ const sommeNonSoldBoost = boost.pieces.filter((p) => !p.lettree).reduce((t, p) =
 const boostOk =
   boost.combinaisonEchec &&
   boost.combinaisons.length === 0 &&
-  nbSageBoost === 276 &&
-  nbSoldBoost === 4 &&
-  nbNonSoldBoost === 272 &&
+  nbSageBoost === 279 &&
+  nbSoldBoost === 6 &&
+  nbNonSoldBoost === 275 &&
   Math.abs(sommeNonSoldBoost - boost.ecart) < 0.02;
 console.log(
   `BOOST résidu non soldé : échec honnête ${boost.combinaisonEchec ? "OK" : "KO"}, ${nbSageBoost} soldées Sage / ${nbSoldBoost} compensées / ${nbNonSoldBoost} non soldées, Σ vivier+Sage = ${sommeNonSoldBoost.toFixed(2)} = écart ${boost.ecart.toFixed(2)} : ${boostOk ? "OK" : "KO"}`,
 );
 
-// EVIOSYS (cas de l'utilisateur, 24/10) : les règlements CAMUSAT BOAOMM sont
+// EVIOSYS (cas de l'utilisateur) : les règlements CAMUSAT BOAOMM sont
 // soldés par lettrage Sage (volet 401000 lettré avec les pièces TIERS de
 // facturation — codes X/Z/AA… visibles dans l'export Sage) : ils ne doivent
-// plus JAMAIS être désignés, et la famille passe en échec honnête (l'écart
-// est le résidu structurel, pas ces règlements).
+// plus JAMAIS être désignés. L'écart feuille est passé de -4 606 000 (20/10)
+// à -976 000 (24/10) après les corrections du comptable : échec honnête.
 const eviosys = reelles.find((f) => f.nom === "EVIOSYS")!;
 const reglementsEVIOSYS = eviosys.pieces.filter(
   (p) =>
@@ -364,35 +370,44 @@ const reglementsEVIOSYS = eviosys.pieces.filter(
 const eviosysOk =
   eviosys.combinaisonEchec &&
   eviosys.combinaisons.length === 0 &&
+  Math.abs(eviosys.ecart - -976000) < 0.02 &&
   reglementsEVIOSYS.length >= 3 &&
   reglementsEVIOSYS.every((p) => p.lettreeSage && !p.dansCombinaison && !p.lettree);
 console.log(
-  `EVIOSYS : échec honnête ${eviosys.combinaisonEchec ? "OK" : "KO"} ; règlements BOAOMM lettrés Sage : ${reglementsEVIOSYS.map((p) => `${p.piece}${p.lettreeSage ? " ✓soldéeSage" : " ✗"}`).join(", ")} : ${eviosysOk ? "OK" : "KO"}`,
+  `EVIOSYS : échec honnête ${eviosys.combinaisonEchec ? "OK" : "KO"} (écart ${eviosys.ecart.toFixed(2)}) ; règlements BOAOMM lettrés Sage : ${reglementsEVIOSYS.map((p) => `${p.piece}${p.lettreeSage ? " ✓soldéeSage" : " ✗"}`).join(", ")} : ${eviosysOk ? "OK" : "KO"}`,
 );
 
-// EASY TECH : l'ancienne combinaison accusait 2 écritures en fait soldées
-// dans Sage (BOAEAS 6333/9615) — la nouvelle combinaison est UNIQUE et sans
-// aucune écriture régularisée.
+// EASY TECH : la combinaison exacte persiste sur les données 24/10 mais
+// l'attribution est AMBIGUÏE (3 décompositions exactes coexistent) — les
+// pièces sont des candidates, et aucune n'est soldée (Sage/compensation).
 const easyTech = reelles.find((f) => f.nom === "EASY TECH")!;
 const easyTechOk =
   easyTech.combinaisons.length === 1 &&
-  easyTech.nbVariantesCombinaison === 1 &&
+  easyTech.nbVariantesCombinaison === 3 &&
   easyTech.combinaisons[0]!.pieces.every((p) => !p.lettreeSage && !p.lettree);
 console.log(
-  `EASY TECH : combinaison unique sans écriture soldée : ${easyTechOk ? "OK" : "KO"} (${easyTech.combinaisons[0]?.pieces.map((p) => p.piece).join(" + ") ?? "aucune"})`,
+  `EASY TECH : combinaison ambiguë (3 décompositions) sans écriture soldée : ${easyTechOk ? "OK" : "KO"} (${easyTech.combinaisons[0]?.pieces.map((p) => p.piece).join(" + ") ?? "aucune"})`,
 );
 
-// Cas de référence du comptable : l'écart 90 000 de la famille TOM.
-const tom = reelles.find((f) => f.nom === "TOM");
-const tomOk =
-  tom !== undefined &&
-  tom.combinaisons.length >= 1 &&
-  tom.combinaisons[0]!.portee === "feuille" &&
-  tom.combinaisons[0]!.pieces.length === 1 &&
-  Math.round(tom.combinaisons[0]!.pieces[0]!.net * 100) === 9000000;
+// SANIFER (cas 24/10) : l'écart -4,00 vient ENTIÈREMENT des RAN non considérés
+// (Σ vivier + soldées Sage = 0,00). L'ancienne désignation de 4 écritures
+// légitimes (masse 1 429 920 pour un écart de 4,00) était un pur hasard
+// arithmétique : la règle de vraisemblance la refuse désormais.
+const sanifer = reelles.find((f) => f.nom === "SANIFER = TALYS")!;
+const saniferOk =
+  sanifer.combinaisonEchec &&
+  sanifer.combinaisons.length === 0 &&
+  sanifer.nbVariantesCombinaison === 0 &&
+  sanifer.pieces.every((p) => !p.dansCombinaison);
 console.log(
-  `TOM 90 000 : combinaison exacte ${tomOk ? "OK" : "KO"} (${tom?.combinaisons[0]?.pieces.map((p) => `${p.journal} ${p.piece} ${p.net}`).join(" + ") ?? "aucune"})`,
+  `SANIFER -4,00 : échec honnête sans fausse désignation (vraisemblance) : ${saniferOk ? "OK" : "KO"}`,
 );
+
+// TOM : l'écart 90 000 (pièce TIERS 3609) a été CORRIGÉ dans Sage entre le
+// 20/10 et le 24/10 — la famille est désormais soldée.
+const tom = result.familles.find((f) => f.nom === "TOM")!;
+const tomOk = tom !== undefined && tom.soldee && tom.ecart === 0;
+console.log(`TOM : famille soldée (90 000 corrigée dans Sage) : ${tomOk ? "OK" : "KO"}`);
 
 // AITS : l'écart feuille 0,40 est composé de DEUX écritures (0,32 + 0,08).
 const aits = reelles.find((f) => f.nom === "AITS");

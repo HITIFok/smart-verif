@@ -399,5 +399,42 @@ check(
   r14c.solutions[0]?.pieces.map((p) => p.piece).join(", ") ?? "échec",
 );
 
+// 15. VRAISEMBLANCE : une combinaison exacte d'écritures d'un autre ordre de
+// grandeur que l'écart est un pur hasard arithmétique — pas une explication
+// comptable (cas SANIFER réel 24/10 : -473 462 + 407 920 + 307 038
+// - 241 500 = -4,00, écart qui vient en réalité des RAN non considérés).
+// L'app refuse de désigner ces écritures légitimes : échec honnête.
+console.log("\n15. Vraisemblance : la combinaison hasardeuse de masse 1,43 M sur un écart de 4,00 est rejetée");
+const cas15 = [
+  piece("BOAGTA", "1501", -473462),
+  piece("TIERS", "1502", 407920),
+  piece("TIERS", "1503", 307038),
+  piece("BOAGTA", "1504", -241500),
+];
+const r15 = resoudreEcartFamille(cas15, -4, 0);
+check(
+  "échec honnête : aucune désignation (masse 1 429 920 > 100 × 4,00)",
+  r15.echec && r15.solutions.length === 0 && r15.nbTotal === 0,
+  `echec=${r15.echec}, solutions=${r15.solutions.length}, nbTotal=${r15.nbTotal}`,
+);
+check("aucune pièce marquée erronée à tort", cas15.every((p) => !p.dansCombinaison));
+// Contrôle positif : la VRAIE pièce de -4,00 est détectée seule malgré les
+// grosses pièces du vivier (taille 1 prioritaire, masse 4 ≤ plafond).
+const cas15b = [...cas15, piece("OD", "1506", -4)];
+const r15b = resoudreEcartFamille(cas15b, -4, 0);
+check(
+  "la vraie petite pièce -4,00 reste détectée (taille 1)",
+  !r15b.echec && r15b.solutions[0]?.pieces.length === 1 && r15b.solutions[0]?.pieces[0]?.piece === "1506",
+  JSON.stringify(r15b.solutions[0]?.pieces.map((p) => p.piece)),
+);
+// Contrôle AITS : les tout petits écarts restent détectables malgré le
+// plancher (0,32 + 0,08 = 0,40, masse 0,40 ≤ plancher 10,00).
+const cas15c = [piece("OD", "1507", 0.32), piece("OD", "1508", 0.08)];
+const r15c = resoudreEcartFamille(cas15c, 0.4, 0);
+check(
+  "AITS 0,40 = 0,32 + 0,08 toujours détecté (plancher 10,00)",
+  !r15c.echec && cents(r15c.solutions[0]?.somme ?? 0) === 40,
+);
+
 console.log(`\n=== Résultat : ${pass} PASS, ${fail} FAIL ===`);
 if (fail > 0) process.exit(1);

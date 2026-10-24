@@ -17,6 +17,7 @@ import type {
   AnomalyType,
   FamilleVerif,
   PieceEcart,
+  PieceEcartRole,
   RanTiersPiece,
 } from "@/lib/analysis-types";
 import { PIECE_ROLE_LABELS } from "@/lib/analysis-types";
@@ -1083,11 +1084,15 @@ function EcartsFamilles({
             <span className="font-semibold">Détection exacte</span> : parmi les écritures non
             soldées seulement, recherche de la plus petite combinaison (1 à 4) dont la somme redonne
             exactement l'écart — un écart peut venir de plusieurs écritures (ex. 90 000 = 48 000 + 2
-            000 + 40 000). Au plus une combinaison est retenue (la plus plausible : écritures
-            suspectes d'abord, masse la plus faible). Si UNE seule décomposition exacte existe, ses
-            écritures sont marquées « erronée » ; si PLUSIEURS décompositions coexistent,
-            l'attribution est ambiguë : les pièces citées sont des « candidates » à rapprocher dans
-            Sage avec leurs contreparties, pas des fautes prouvées.
+            000 + 40 000). <span className="font-semibold">Vraisemblance</span> : la combinaison
+            n'est retenue que si ses écritures sont d'un ordre de grandeur compatible avec l'écart
+            (masse ≤ 100 × |écart|) — une égalité exacte obtenue avec des écritures 100 fois plus
+            grosses est un pur hasard arithmétique, pas une explication (l'app refuse de désigner).
+            Au plus une combinaison est retenue (la plus plausible : écritures suspectes d'abord,
+            masse la plus faible). Si UNE seule décomposition exacte existe, ses écritures sont
+            marquées « erronée » ; si PLUSIEURS décompositions coexistent, l'attribution est ambiguë
+            : les pièces citées sont des « candidates » à rapprocher dans Sage avec leurs
+            contreparties, pas des fautes prouvées.
           </li>
           <li>
             <span className="font-semibold">Sans combinaison exacte</span> : l'écart est le résidu
@@ -1220,6 +1225,19 @@ function CarteFamilleEcart({
   // compensation (montant exactement opposé). Dans les deux cas elles ne
   // sont pas à corriger — le comptable veut voir les non soldées d'abord.
   const estSoldee = (p: PieceEcart) => p.lettreeSage || p.lettree;
+  // Composition du résidu par rôle comptable : de quoi l'écart non résolu est
+  //-il fait ? (à-nouveaux, paiements non lettrés, comptes-à-compte…) — pour
+  // comprendre POURQUOI aucune combinaison précise ne peut être désignée.
+  const compositionRoles = Object.entries(
+    f.pieces
+      .filter((p) => !estSoldee(p))
+      .reduce<Record<string, { n: number; somme: number }>>((acc, p) => {
+        const entree = (acc[p.role] ??= { n: 0, somme: 0 });
+        entree.n++;
+        entree.somme += p.net;
+        return acc;
+      }, {}),
+  ).sort((a, b) => Math.abs(b[1].somme) - Math.abs(a[1].somme));
   const [masquerSoldees, setMasquerSoldees] = useState(() => f.pieces.some((p) => !estSoldee(p)));
   const somme = f.pieces.reduce((t, p) => t + p.net, 0);
   // Rapprochement : Σ pièces à corriger + RAN non considérés (462/467,
@@ -1424,11 +1442,38 @@ function CarteFamilleEcart({
                 dans Sage (lettrage équilibré, régularisées — jamais candidates) et{" "}
                 {nbCompensees.toLocaleString("fr-FR")} se compensent 2 à 2 (montant exactement
                 opposé, pas à corriger) ; {nbNonSoldees.toLocaleString("fr-FR")} restent non soldées
-                (Σ = {fmt(sommeNonSoldees)}). Aucune combinaison de 1 à 4 écritures non soldées ne
-                redonne exactement l'écart de {fmt(f.ecart)} : ces écritures se corrigent ensemble,
-                pas par une sous-combinaison arbitraire — les examiner dans Sage, contribution la
-                plus forte d'abord (listées ci-dessous).
+                (Σ = {fmt(sommeNonSoldees)}). Aucune combinaison vraisemblable de 1 à 4 écritures
+                non soldées ne redonne exactement l'écart de {fmt(f.ecart)} : ces écritures se
+                corrigent ensemble, pas par une sous-combinaison arbitraire — les examiner dans
+                Sage, contribution la plus forte d'abord (listées ci-dessous).
               </p>
+              {compositionRoles.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-[11px] font-semibold text-foreground/80">
+                    De quoi le résidu est-il fait ? ({nbNonSoldees.toLocaleString("fr-FR")}{" "}
+                    écriture(s) non soldées par rôle comptable)
+                  </p>
+                  <div className="mt-1 space-y-0.5">
+                    {compositionRoles.map(([role, v]) => (
+                      <p key={role} className="num text-[11px] text-muted-foreground">
+                        <span className="font-semibold text-foreground/90">
+                          {PIECE_ROLE_LABELS[role as PieceEcartRole] ?? role}
+                        </span>{" "}
+                        — {v.n.toLocaleString("fr-FR")} écriture(s), Σ {fmt(v.somme)} :{" "}
+                        {role === "a_nouveaux"
+                          ? "reports d'ouverture (non corrigeables en cours d'exercice)"
+                          : role === "paiement_tiers"
+                            ? "règlements/facturations en cours, non lettrés au niveau pièce (souvent multi-clients)"
+                            : role === "compte_a_compte"
+                              ? "transferts internes entre banques"
+                              : role === "frais_bancaires"
+                                ? "frais bancaires à la charge de MCI CARE"
+                                : "hors schéma du cycle appel de fonds"}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : null}
           <p className="px-4 pt-3 text-xs text-muted-foreground">
