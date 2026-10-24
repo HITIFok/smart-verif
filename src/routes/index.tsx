@@ -1337,13 +1337,51 @@ function CarteFamilleEcart({
                   {solution.pieces.map((p) => `${p.date} — ${p.libelle}`).join(" · ")}
                 </p>
               </div>
-              {f.nbVariantesCombinaison > 1 && (
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  {f.nbVariantesCombinaison.toLocaleString("fr-FR")} combinaisons de cette taille
-                  sont exactes — elles sont alternatives (pas cumulatives) : la plus plausible est
-                  présentée (écritures suspectes d'abord, masse la plus faible). Rapprochez chaque
-                  candidate avec sa contrepartie dans Sage avant toute correction.
-                </p>
+              {ambigue && (
+                <div className="mt-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    {f.nbVariantesCombinaison.toLocaleString("fr-FR")} décompositions de cette
+                    taille sont tout aussi exactes — elles sont alternatives (pas cumulatives) : la
+                    plus plausible est présentée en premier (écritures suspectes d'abord, masse la
+                    plus faible). Rapprochez chaque candidate avec sa contrepartie dans Sage avant
+                    toute correction.
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {(f.variantes ?? f.combinaisons).map((v, n) => (
+                      <div key={n} className="rounded bg-card px-3 py-1.5">
+                        <p className="num text-[11px]">
+                          <span className="font-semibold">
+                            Décomposition {n + 1}
+                            {n === 0 ? " — présentée" : ""}
+                          </span>
+                          {" : "}
+                          {v.pieces.map((p, i) => (
+                            <span key={`${p.journal}|${p.piece}|${i}`}>
+                              {i > 0 && <span className="mx-1 text-muted-foreground">+</span>}
+                              <span className={p.net < 0 ? "text-destructive" : ""}>
+                                {p.journal} {p.piece || "—"} ({fmt(p.net)})
+                              </span>
+                            </span>
+                          ))}
+                          <span className="mx-1 text-muted-foreground">=</span>
+                          {fmt(v.somme)}
+                        </p>
+                        <p className="num truncate text-[10px] text-muted-foreground">
+                          {v.pieces.map((p) => `${p.date} — ${p.libelle}`).join(" · ")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  {f.nbVariantesCombinaison > (f.variantes?.length ?? 0) && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      …et{" "}
+                      {(f.nbVariantesCombinaison - (f.variantes?.length ?? 0)).toLocaleString(
+                        "fr-FR",
+                      )}{" "}
+                      autre(s) décomposition(s) exacte(s) de même taille (non listée(s)).
+                    </p>
+                  )}
+                </div>
               )}
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Les {nbSoldees.toLocaleString("fr-FR")} autre(s) écriture(s) soldée(s) par lettrage

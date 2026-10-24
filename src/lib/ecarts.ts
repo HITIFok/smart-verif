@@ -41,6 +41,9 @@ const TAILLE_MAX = 4;
 const MAX_BRUTES = 300;
 /** Budget anti-explosion (nombre de candidats examinés) par taille. */
 const BUDGET_EXAMENS = 2_000_000;
+/** Plafond de variantes distinctes stockées et exportées (les premières,
+ *  les plus plausibles d'abord). nbTotal reste le compte complet. */
+const MAX_VARIANTES = 12;
 
 /** Conversion en centimes : tout le calcul est en entiers, zéro erreur d'arrondi. */
 const cents = (n: number) => Math.round(n * 100);
@@ -57,6 +60,10 @@ interface SolutionBrute {
 export interface ResolutionEcart {
   /** Combinaison retenue (au plus une : la plus plausible). */
   solutions: CombinaisonEcart[];
+  /** Toutes les décompositions exactes distinctes à la taille retenue, la
+   *  plus plausible d'abord (= solutions[0]) — utiles pour le rapprochement
+   *  dans Sage quand l'attribution est ambiguë. Bornées à MAX_VARIANTES. */
+  variantes: CombinaisonEcart[];
   /** Nombre total de variantes distinctes à la taille de la solution. */
   nbTotal: number;
   /** Vrai si aucune combinaison exacte n'a été trouvée (jusqu'à 4 écritures
@@ -220,7 +227,8 @@ function chercherTaille(
  *     exacte, retente sur l'écart hors RAN non considérés (« hors_ran ») ;
  *  3. au plus UNE solution retenue (la plus plausible), seules ses écritures
  *     sont marquées `dansCombinaison` ; les variantes équivalentes sont
- *     comptées (nbTotal) mais pas marquées ;
+ *     comptées (nbTotal) ET collectées (variantes, la retenue d'abord) pour
+ *     un rapprochement honnête dans Sage quand l'attribution est ambiguë ;
  *  4. sans combinaison : échec honnête — l'écart est le résidu des écritures
  *     non soldées, renvoyé avec leurs nombres (nbNonSoldees / nbSoldees). */
 export function resoudreEcartFamille(
@@ -240,6 +248,7 @@ export function resoudreEcartFamille(
   const nbSoldees = pieces.length - vivier.length;
   const echec: ResolutionEcart = {
     solutions: [],
+    variantes: [],
     nbTotal: 0,
     echec: true,
     nbNonSoldees: vivier.length,
@@ -273,16 +282,24 @@ export function resoudreEcartFamille(
       // 3. UNE seule solution retenue — les variantes sont alternatives et
       // non cumulatives : marquer leurs unions serait faux (c'est exactement
       // ce qui affichait « 11 écritures erronées » mélangant des variantes).
-      const retenue = brutes[0]!;
-      const solution: CombinaisonEcart = {
-        pieces: retenue.idx.map((i) => vivier[i]!),
-        somme: retenue.idx.reduce((tt, i) => tt + vals[i]!, 0) / 100,
+      // Les variantes restent toutefois COLLECTÉES (sans marquer leurs
+      // pièces) : elles alimentent l'honnêteté de l'attribution — quand
+      // plusieurs décompositions tombent juste, l'export les liste toutes
+      // pour que le comptable rapproche chacune dans Sage.
+      const versCombinaison = (b: SolutionBrute): CombinaisonEcart => ({
+        pieces: b.idx.map((i) => vivier[i]!),
+        somme: b.idx.reduce((tt, i) => tt + vals[i]!, 0) / 100,
         cible: t / 100,
         portee,
-      };
+      });
+      // La solution retenue EST la première variante (même objet) : les deux
+      // listes ne peuvent jamais diverger.
+      const variantes = brutes.slice(0, MAX_VARIANTES).map(versCombinaison);
+      const solution = variantes[0]!;
       for (const p of solution.pieces) p.dansCombinaison = true;
       return {
         solutions: [solution],
+        variantes,
         nbTotal: brutes.length,
         echec: false,
         nbNonSoldees: vivier.length,

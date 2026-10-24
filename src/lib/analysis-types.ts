@@ -183,6 +183,13 @@ export interface FamilleVerif {
   /** Nombre de variantes distinctes à la taille de la solution retenue
    *  (la combinaison retenue est la plus plausible parmi elles). */
   nbVariantesCombinaison: number;
+  /** Toutes les décompositions exactes distinctes à la taille retenue, la
+   *  plus plausible d'abord (= combinaisons[0]). Utilité : rapprochement
+   *  dans Sage — quand plusieurs décompositions tombent juste, chacune est
+   *  candidate et l'export liste toutes celles retenues (borné à 12) pour
+   *  que le comptable vérifie laquelle correspond à une vraie anomalie.
+   *  Vide si échec (aucune combinaison) ou une seule décomposition. */
+  variantes?: CombinaisonEcart[];
   /** Aucune combinaison exacte trouvée parmi les écritures non soldées
    *  (recherche bornée à 4 écritures) : l'écart est le résidu de ces
    *  écritures, listées comme contributeurs — pas de fausse piste. */

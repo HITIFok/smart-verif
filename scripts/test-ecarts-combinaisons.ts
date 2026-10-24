@@ -290,5 +290,50 @@ check(
   cas12.every((p) => !p.dansCombinaison),
 );
 
+// 13. VARIANTES : plusieurs décompositions exactes distinctes sont collectées
+// (la plus plausible d'abord) sans jamais marquer leurs pièces erronées —
+// l'export les liste pour le rapprochement Sage (cas EVIOSYS réel : 5
+// décompositions de 3 écritures tombent juste, toutes correctes dans Sage).
+console.log("\n13. Attribution ambiguë : toutes les décompositions sont collectées");
+const cas13 = [
+  piece("BNI", "1301", -6000),
+  piece("BNI", "1302", -4000),
+  piece("BNI", "1303", -3000),
+  piece("BNI", "1304", -7000),
+  piece("BNI", "1305", -1000),
+  piece("BNI", "1306", -9000),
+  piece("BNI", "1307", 5000),
+  piece("TIERS", "1308", -5000), // paire soldée avec 1307
+];
+const r13 = resoudreEcartFamille(cas13, -10000, 0);
+check(
+  "3 décompositions de taille 2 tombent juste (nbTotal = 3)",
+  r13.nbTotal === 3,
+  `nbTotal=${r13.nbTotal}`,
+);
+check(
+  "les variantes sont collectées, la retenue d'abord",
+  r13.variantes.length === 3 &&
+    r13.variantes[0] === r13.solutions[0] &&
+    r13.variantes[0] !== undefined &&
+    r13.variantes[0]!.pieces === r13.solutions[0]!.pieces,
+  `variantes=${r13.variantes.length}`,
+);
+check(
+  "chaque variante redonne exactement l'écart",
+  r13.variantes.every((v) => cents(v.somme) === -1000000 && cents(v.cible) === -1000000),
+  JSON.stringify(r13.variantes.map((v) => v.somme)),
+);
+check(
+  "seule la décomposition PRÉSENTÉE marque ses pièces erronées",
+  r13.variantes.slice(1).every((v) => v.pieces.every((p) => !p.dansCombinaison)) &&
+    r13.solutions[0]!.pieces.every((p) => p.dansCombinaison),
+);
+check(
+  "les pièces des variantes ne se recouvrent pas toutes (décompositions distinctes)",
+  new Set(r13.variantes.map((v) => v.pieces.map((p) => p.piece).join("+"))).size === 3,
+  JSON.stringify(r13.variantes.map((v) => v.pieces.map((p) => p.piece).join("+"))),
+);
+
 console.log(`\n=== Résultat : ${pass} PASS, ${fail} FAIL ===`);
 if (fail > 0) process.exit(1);

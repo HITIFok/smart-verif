@@ -732,6 +732,9 @@ export function analyse(
       const resolution = resoudreEcartFamille(list, sf.f.ecart, sf.ranNonConsidere);
       sf.f.combinaisons = resolution.solutions;
       sf.f.nbVariantesCombinaison = resolution.nbTotal;
+      // Variantes distinctes (la retenue d'abord) : la matière du rapprochement
+      // honnête dans Sage quand plusieurs décompositions tombent juste.
+      sf.f.variantes = resolution.variantes;
       sf.f.combinaisonEchec = resolution.echec;
       // (la solution retenue marque ses pièces dansCombinaison, le lettrage
       // marque les pièces soldées lettree — dans les deux cas sur la liste)

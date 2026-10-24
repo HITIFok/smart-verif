@@ -17,6 +17,39 @@ const LABELS: Record<string, string> = {
   ecart_balance: "Écart brouillard / balance",
 };
 
+/** Format Excel des montants : deux décimales, séparateurs selon la locale
+ *  d'Excel (espace fine + virgule sur un poste en français). */
+const FMT_MONTANT = "#,##0.00";
+
+/** Mise en forme d'une feuille produite par json_to_sheet (brute) : format
+ *  monétaire sur les colonnes de montants, largeurs de colonnes lisibles. */
+function mettreEnForme(
+  ws: XLSX.WorkSheet | undefined,
+  options: { montants?: string[]; largeurs?: Record<string, number> },
+) {
+  if (!ws || !ws["!ref"]) return;
+  const plage = XLSX.utils.decode_range(ws["!ref"]);
+  const indexDe = new Map<number, string>();
+  for (let c = plage.s.c; c <= plage.e.c; c++) {
+    const cellule = ws[XLSX.utils.encode_cell({ r: plage.s.r, c })];
+    if (cellule && cellule.v != null) indexDe.set(c, String(cellule.v));
+  }
+  for (const nom of options.montants ?? []) {
+    for (const [c, titre] of indexDe) {
+      if (titre !== nom) continue;
+      for (let r = plage.s.r + 1; r <= plage.e.r; r++) {
+        const cellule = ws[XLSX.utils.encode_cell({ r, c })];
+        if (cellule && cellule.t === "n") cellule.z = FMT_MONTANT;
+      }
+    }
+  }
+  if (options.largeurs) {
+    ws["!cols"] = [...indexDe.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, titre]) => ({ wch: options.largeurs?.[titre] ?? 14 }));
+  }
+}
+
 /** Détail de LA combinaison exacte retenue pour une famille : les écritures
  *  jointes par « + » avec leur montant, somme = écart. Si plusieurs
  *  décompositions exactes coexistent (variantes), l'attribution est ambiguë :
@@ -40,7 +73,10 @@ export function exportAnomalies(result: AnalysisResult) {
   const synthese = result.entites.map((e) => ({
     Client: e.nom,
     Suffixe: e.suffixe,
-    ...(e.famille ? { Famille: e.famille } : {}),
+    // Toujours présent (même vide) : l'ordre des colonnes de json_to_sheet
+    // suit la première occurrence de chaque clé — en conditionnel, « Famille »
+    // se retrouvait en toute fin de feuille.
+    Famille: e.famille ?? "",
     "Solde appel de fonds": e.appelDeFonds,
     "Solde trésorerie": e.tresorerie,
     Écart: e.ecart,
@@ -58,7 +94,7 @@ export function exportAnomalies(result: AnalysisResult) {
     Statut: f.soldee ? "Soldée" : "Écart à corriger",
     "Pièces à corriger": f.pieces.filter((p) => !p.lettree).length,
     "Écritures soldées (lettrage)": f.pieces.filter((p) => p.lettree).length,
-    "RAN non considérés (462/467, 512/513, divers)": f.nbRanNonConsidere,
+    "Nb pièces RAN non considérés": f.nbRanNonConsidere,
     "Total RAN non considérés": f.ranNonConsidere,
     ...(f.soldee
       ? {}
@@ -82,10 +118,24 @@ export function exportAnomalies(result: AnalysisResult) {
   // les RAN 462/467, 512/513 ou divers sont résumés sur « Vérification familles ».
   // Lettrage : les écritures soldées (montant exactement opposé) se
   // compensent 2 à 2 et ne sont pas à corriger — elles sont marquées.
+  // « Variantes (n°) » : les décompositions exactes contenant la pièce —
+  // en attribution ambiguïe, la pièce peut apparaître dans plusieurs
+  // variantes candidates (1 = la présentée, la plus plausible).
   const piecesFamilles = result.familles
     .filter((f) => !f.soldee)
-    .flatMap((f) =>
-      f.pieces.map((p) => ({
+    .flatMap((f) => {
+      const clePiece = (p: { journal: string; piece: string; date: string }) =>
+        `${p.journal}|${p.piece}|${p.date}`;
+      const variantesDe = new Map<string, number[]>();
+      (f.variantes ?? f.combinaisons).forEach((v, i) => {
+        for (const p of v.pieces) {
+          const k = clePiece(p);
+          const arr = variantesDe.get(k);
+          if (arr) arr.push(i + 1);
+          else variantesDe.set(k, [i + 1]);
+        }
+      });
+      return f.pieces.map((p) => ({
         Famille: f.nom,
         Membres: f.membres.join(" + "),
         "Écart famille": f.ecart,
@@ -100,9 +150,10 @@ export function exportAnomalies(result: AnalysisResult) {
         Anomalie: p.anomalie ? "Oui" : "",
         "Soldée (lettrage)": p.lettree ? "Oui" : "",
         "Dans combinaison (candidate si ambigu)": p.dansCombinaison ? "Oui" : "",
+        "Variantes (n°)": variantesDe.get(clePiece(p))?.join(", ") ?? "",
         "Aussi dans": p.aussiDans?.join(", ") ?? "",
-      })),
-    );
+      }));
+    });
   XLSX.utils.book_append_sheet(
     wb,
     XLSX.utils.json_to_sheet(piecesFamilles),
@@ -155,6 +206,33 @@ export function exportAnomalies(result: AnalysisResult) {
       ];
     });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(combinaisons), "Combinaisons écarts");
+
+  // Variantes d'attribution : quand PLUSIEURS décompositions exactes d'un
+  // écart coexistent, aucune ne peut être désignée erronée avec certitude —
+  // toutes celles retenues sont listées ici (la présentée d'abord, la plus
+  // plausible : écritures suspectes d'abord, masse la plus faible ensuite)
+  // pour que le comptable rapproche chaque candidate dans Sage et reconnaisse
+  // celle qui correspond à une vraie anomalie (ou conclue à un résidu).
+  const variantes = result.familles
+    .filter((f) => !f.soldee && (f.nbVariantesCombinaison ?? 0) > 1)
+    .flatMap((f) => {
+      const liste = f.variantes ?? f.combinaisons;
+      const nbTotal = f.nbVariantesCombinaison;
+      return liste.map((v, i) => ({
+        Famille: f.nom,
+        Membres: f.membres.join(" + "),
+        "Écart feuille": f.ecart,
+        Portée: v.portee === "feuille" ? "Écart feuille" : "Hors RAN non considérés",
+        Variante: `${i + 1} / ${nbTotal}`,
+        "Présentée d'abord": i === 0 ? "Oui" : "",
+        "Nb écritures": v.pieces.length,
+        Écritures: v.pieces
+          .map((p) => `${p.journal} ${p.piece} du ${p.date} — ${p.net.toFixed(2)}`)
+          .join(" + "),
+        Somme: v.somme,
+      }));
+    });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(variantes), "Variantes d'attribution");
 
   // À-nouveaux de tiers (401000 / 460 / 411) hors familles : les RAN de
   // tiers à considérer, par opposition aux RAN 462/467 non considérés.
@@ -255,6 +333,163 @@ export function exportAnomalies(result: AnalysisResult) {
     Intitulé: t.intitule,
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(planTiers), "Plan tiers");
+
+  // Mise en forme des montants et des largeurs de colonnes (json_to_sheet
+  // produit du brut : sans cela, les Ariary s'affichent sans séparateurs).
+  mettreEnForme(wb.Sheets["Synthèse clients"], {
+    montants: ["Solde appel de fonds", "Solde trésorerie", "Écart"],
+    largeurs: {
+      Client: 30,
+      Suffixe: 8,
+      "Solde appel de fonds": 20,
+      "Solde trésorerie": 20,
+      Écart: 20,
+      Statut: 10,
+      "Nb anomalies": 12,
+      Famille: 22,
+    },
+  });
+  mettreEnForme(wb.Sheets["Vérification familles"], {
+    montants: [
+      "Solde appel de fonds",
+      "Solde trésorerie",
+      "Vérification (écart)",
+      "Total RAN non considérés",
+      "Somme combinaison",
+    ],
+    largeurs: {
+      Famille: 20,
+      Membres: 44,
+      "Solde appel de fonds": 20,
+      "Solde trésorerie": 20,
+      "Vérification (écart)": 20,
+      Statut: 16,
+      "Pièces à corriger": 11,
+      "Écritures soldées (lettrage)": 13,
+      "Nb pièces RAN non considérés": 13,
+      "Total RAN non considérés": 20,
+      "Écritures désignées (combinaison = écart)": 80,
+      "Somme combinaison": 18,
+      Portée: 13,
+      Variantes: 10,
+    },
+  });
+  mettreEnForme(wb.Sheets["Pièces écarts familles"], {
+    montants: ["Écart famille", "Mouvement net"],
+    largeurs: {
+      Famille: 14,
+      Membres: 44,
+      "Écart famille": 16,
+      Journal: 9,
+      "N° pièce": 9,
+      Date: 11,
+      Libellé: 62,
+      Rôle: 18,
+      "Comptes périmètre": 18,
+      "Tous comptes": 34,
+      "Mouvement net": 15,
+      Anomalie: 9,
+      "Soldée (lettrage)": 10,
+      "Dans combinaison (candidate si ambigu)": 14,
+      "Variantes (n°)": 13,
+      "Aussi dans": 28,
+    },
+  });
+  mettreEnForme(wb.Sheets["Variantes d'attribution"], {
+    montants: ["Écart feuille", "Somme"],
+    largeurs: {
+      Famille: 16,
+      Membres: 40,
+      "Écart feuille": 16,
+      Portée: 22,
+      Variante: 10,
+      "Présentée d'abord": 12,
+      "Nb écritures": 11,
+      Écritures: 90,
+      Somme: 16,
+    },
+  });
+  mettreEnForme(wb.Sheets["Combinaisons écarts"], {
+    montants: ["Écart feuille", "RAN non considérés", "Somme"],
+    largeurs: {
+      Famille: 16,
+      Membres: 40,
+      "Écart feuille": 16,
+      "RAN non considérés": 18,
+      "Non soldées (lettrage)": 12,
+      "Soldées (lettrage)": 12,
+      Portée: 22,
+      "Nb écritures": 11,
+      Écritures: 90,
+      Somme: 16,
+      Variantes: 10,
+    },
+  });
+  mettreEnForme(wb.Sheets["RAN tiers 401000-460-411"], {
+    montants: ["Mouvement net tiers"],
+    largeurs: {
+      Journal: 9,
+      "N° pièce": 9,
+      Date: 11,
+      Libellé: 52,
+      "Comptes de tiers (401000/460/411)": 26,
+      "Tous comptes": 30,
+      "Mouvement net tiers": 18,
+    },
+  });
+  mettreEnForme(wb.Sheets["Écritures à corriger"], {
+    montants: ["Montant"],
+    largeurs: {
+      Type: 22,
+      Client: 22,
+      Journal: 9,
+      "N° pièce": 9,
+      Date: 11,
+      Libellé: 52,
+      Comptes: 30,
+      "Libellés comptes (plan)": 44,
+      Montant: 16,
+      Diagnostic: 56,
+    },
+  });
+  mettreEnForme(wb.Sheets["Comptes à comptes 580001"], {
+    montants: ["Débit", "Crédit"],
+    largeurs: {
+      Opération: 18,
+      Client: 20,
+      "Pièce source": 11,
+      Date: 11,
+      Libellé: 46,
+      Statut: 11,
+      Motif: 42,
+      Côté: 14,
+      Journal: 9,
+      Compte: 10,
+      Débit: 15,
+      Crédit: 15,
+    },
+  });
+  mettreEnForme(wb.Sheets["Schéma des écritures"], {
+    largeurs: { Journal: 9, Étape: 34, Sens: 8, Compte: 44, Rôle: 52 },
+  });
+  mettreEnForme(wb.Sheets["Banques des sociétés"], {
+    largeurs: {
+      Journal: 9,
+      Compte: 9,
+      "Intitulé plan": 22,
+      Type: 12,
+      Opérateur: 10,
+      Société: 22,
+      "Suffixe(s) client": 16,
+      Note: 60,
+    },
+  });
+  mettreEnForme(wb.Sheets["Plan comptable"], {
+    largeurs: { "N° compte": 11, Intitulé: 52, Nature: 12 },
+  });
+  mettreEnForme(wb.Sheets["Plan tiers"], {
+    largeurs: { "Code tiers": 16, Type: 12, Intitulé: 56 },
+  });
 
   XLSX.writeFile(wb, `Anomalies_BG_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
