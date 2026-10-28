@@ -15,7 +15,13 @@ import { BANQUE_PROPRIETAIRE, SHARED_BANK } from "./shared-bank";
 import { BANQUE_PAR_COMPTE, BANQUES_PAR_SOCIETE } from "./banques-societes";
 import { matchPieceSchema } from "./schema-ecritures";
 import { avecLibelle } from "./referentiel";
-import { banquesDuSuffixeFactory, rapprocher, FENETRE_JOURS } from "./rapprochement";
+import {
+  banquesDuSuffixeFactory,
+  rapprocher,
+  tracerOuvertures,
+  FENETRE_JOURS,
+  FENETRE_N1_JOURS,
+} from "./rapprochement";
 import { construireValidation, parseEcartsReference, type EcartReference } from "./validation";
 import {
   normaliseCompte,
@@ -172,8 +178,13 @@ export function parseBalance(wb: XLSX.WorkBook): BalanceRow[] | null {
  * repérée par son contenu (Code journal + compte général + Débit/Crédit) et
  * aucune ligne sans compte à 6 chiffres n'est convertie en écriture. Chaque
  * écriture garde son n° de ligne Excel (1 = en-tête) pour la traçabilité.
+ * `meta` étiquette chaque écriture avec l'exercice d'origine et le nom du
+ * fichier source (import interexercices : N et N-1 restent distingués).
  */
-export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
+export function parseBrouillard(
+  buffer: ArrayBuffer,
+  meta?: { exercice?: string; fichier?: string },
+): EntryLine[] {
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0] ?? ""]!;
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
@@ -262,6 +273,8 @@ export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
       debit: num(cell(r, cols.debit)),
       credit: num(cell(r, cols.credit)),
       ligne: i + 1, // n° de ligne Excel (1 = en-tête) — traçabilité
+      ...(meta?.exercice ? { exercice: meta.exercice } : {}),
+      ...(meta?.fichier ? { fichier: meta.fichier } : {}),
     };
     const lettrage = String(cell(r, cols.lettrage) ?? "").trim();
     if (lettrage && lettrage !== "*") l.lettrage = lettrage;
@@ -322,6 +335,7 @@ export function analyse(
   verif: VerifEntity[],
   balance?: BalanceRow[] | null,
   ecartsReference: EcartReference[] = [],
+  lignesN1?: EntryLine[],
 ): AnalysisResult {
   // Account balances
   const soldes = new Map<string, number>();
@@ -950,9 +964,15 @@ export function analyse(
     if (/^(BOA|BNI).*MCI$/.test(l.journal) && l.compte.startsWith("512"))
       mciCountsR.set(l.compte, (mciCountsR.get(l.compte) ?? 0) + 1);
   const mciBankR = [...mciCountsR.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  // Banques vues dans N OU dans N-1 : une banque MCI comptabilisée uniquement
+  // dans N-1 doit rester une destination de recherche pour l'apurement des
+  // résidus N-1 (anti double comptage), sans élargir les contrôles de N.
+  const bankAccountsN1R = new Set<string>();
+  for (const l of lignesN1 ?? []) if (/^51[23]/.test(l.compte)) bankAccountsN1R.add(l.compte);
+  const bankAccountsR = new Set([...bankAccounts, ...bankAccountsN1R]);
   const mciBanksR = new Set<string>(
     [...(BANQUES_PAR_SOCIETE.get("MCI CARE") ?? []), mciBankR].filter(
-      (b): b is string => b !== null && bankAccounts.has(b),
+      (b): b is string => b !== null && bankAccountsR.has(b),
     ),
   );
   const banqueSocieteR = new Map<string, string>();
@@ -962,9 +982,66 @@ export function analyse(
     if (!banqueSocieteR.has(compte)) banqueSocieteR.set(compte, owner.nom);
   const banqueEntiteR = new Map<string, string>();
   for (const [compte, owner] of ownerOf) banqueEntiteR.set(compte, owner.nom);
+
+  // -------------------------------------------------------------------
+  // BROUILLARD N-1 (facultatif) : pièces indexées à part (clé préfixée
+  // « N1| » — aucune confusion possible entre exercices), lettrage Sage de
+  // N-1 calculé séparément, traçage des à-nouveaux d'ouverture partagé.
+  // Les soldes, familles et anomalies restent calculés sur le SEUL N.
+  // -------------------------------------------------------------------
+  // Comptes utiles aux recherches interexercices (règles A/B/C, ouverture,
+  // doublons) : familles AF/TR, comptes de tiers 401/411, frais 627+TVA et
+  // trésorerie de transfert 580001. Le volume N-1 reste borné au périmètre
+  // réel des règles — les autres comptes ne rapprochent jamais rien.
+  const n1Filtrees = (lignesN1 ?? []).filter(
+    (l) =>
+      family(l.compte) !== null ||
+      l.compte === "580001" ||
+      l.compte.startsWith("401") ||
+      l.compte.startsWith("411") ||
+      l.compte.startsWith("627") ||
+      l.compte === "445600",
+  );
+  const piecesN1 = new Map<string, EntryLine[]>();
+  for (const l of n1Filtrees) {
+    const key = `N1|${l.journal}|${l.piece}|${l.date}`;
+    const arr = piecesN1.get(key);
+    if (arr) arr.push(l);
+    else piecesN1.set(key, [l]);
+  }
+  const equilibresN1 = groupesLettrageSage(n1Filtrees);
+  const soldeeSageN1 = (key: string) => {
+    const group = piecesN1.get(key);
+    if (!group) return false;
+    return pieceSoldeeSage(group, equilibresN1);
+  };
+  const ouverturesN1 = piecesN1.size ? tracerOuvertures(pieces, piecesN1) : null;
+  const datesN1 = n1Filtrees
+    .map((l) => l.date)
+    .filter(Boolean)
+    .sort();
+  const infoN1 = piecesN1.size
+    ? {
+        fichier: n1Filtrees.find((l) => l.fichier)?.fichier ?? "",
+        exercice: n1Filtrees.find((l) => l.exercice)?.exercice ?? "",
+        lignes: n1Filtrees.length,
+        pieces: piecesN1.size,
+        du: datesN1[0] ?? "",
+        au: datesN1[datesN1.length - 1] ?? "",
+        ranTraces: ouverturesN1?.nbTraces ?? 0,
+        ranAmbigus: ouverturesN1?.nbAmbigus ?? 0,
+        ranNonTraces: ouverturesN1?.nbNonTraces ?? 0,
+        nbDoublonsInterExercices: 0, // renseigné après rapprocher()
+      }
+    : null;
+
   const rapprochements = rapprocher({
     lignes,
     pieces,
+    piecesN1: piecesN1.size ? piecesN1 : undefined,
+    soldeeSageN1,
+    fenetreN1Jours: FENETRE_N1_JOURS,
+    ouvertures: ouverturesN1 ?? undefined,
     validAfByBank,
     banqueSociete: banqueSocieteR,
     banqueEntite: banqueEntiteR,
@@ -974,6 +1051,11 @@ export function analyse(
     nomDeSuffixe: nomDe,
     fenetreJours: FENETRE_JOURS,
   });
+  if (infoN1) {
+    infoN1.nbDoublonsInterExercices = rapprochements.filter(
+      (c) => c.type === "A_doublon" && c.explication.includes("brouillard N-1"),
+    ).length;
+  }
 
   // MODE DE VALIDATION : reproduction des écarts de référence de la feuille
   // « Feuil2 » du classeur de vérification (lignes Vérification).
@@ -1006,6 +1088,7 @@ export function analyse(
     ranTiers,
     rapprochements,
     validation,
+    n1: infoN1,
     stats: {
       lignes: lignes.length,
       pieces: pieces.size,

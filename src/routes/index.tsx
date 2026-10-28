@@ -79,6 +79,7 @@ const fmt = (n: number) =>
 
 function Index() {
   const [brouillard, setBrouillard] = useState<File | null>(null);
+  const [brouillardN1, setBrouillardN1] = useState<File | null>(null);
   const [verif, setVerif] = useState<File | null>(null);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +105,11 @@ function Index() {
     setResult(null);
     setStep("Chargement des fichiers…");
     try {
-      const [b, v] = await Promise.all([brouillard.arrayBuffer(), verif.arrayBuffer()]);
+      const [b, v, bn1] = await Promise.all([
+        brouillard.arrayBuffer(),
+        verif.arrayBuffer(),
+        brouillardN1 ? brouillardN1.arrayBuffer() : Promise.resolve<ArrayBuffer | null>(null),
+      ]);
       const worker = new Worker(new URL("../workers/analysis.worker.ts", import.meta.url), {
         type: "module",
       });
@@ -122,7 +127,14 @@ function Index() {
           worker.terminate();
         }
       };
-      worker.postMessage({ brouillard: b, verif: v }, [b, v]);
+      const transferts: Transferable[] = [b, v];
+      const requete: Record<string, unknown> = { brouillard: b, verif: v };
+      if (bn1) {
+        requete["brouillardN1"] = bn1;
+        requete["fichierN1"] = brouillardN1!.name;
+        transferts.push(bn1);
+      }
+      worker.postMessage(requete, transferts);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStep(null);
@@ -158,7 +170,7 @@ function Index() {
         </p>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2">
+      <section className="grid gap-4 sm:grid-cols-3">
         <FileDrop
           label="Brouillard des écritures"
           hint="BROUILLARD_2026….xlsx — toutes les lignes comptables"
@@ -171,7 +183,19 @@ function Index() {
           file={verif}
           onFile={setVerif}
         />
+        <FileDrop
+          label="Brouillard N-1 (facultatif)"
+          hint="BROUILLARD_2025….xlsx — exercice précédent, pour expliquer reports et opérations non apurées"
+          file={brouillardN1}
+          onFile={setBrouillardN1}
+        />
       </section>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Le brouillard N-1 est <span className="font-semibold">complémentaire</span> : sans lui, le
+        moteur fonctionne à l'identique (rapprochements et validation calculés sur N seul). Avec
+        lui, chaque écriture reste étiquetée par exercice et fichier d'origine — aucun rapprochement
+        n'est fait sur la seule égalité de montants.
+      </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
@@ -1706,6 +1730,30 @@ function Rapprochements({ result }: { result: AnalysisResult }) {
             </span>
           ))}
         </p>
+        {result.n1Erreur && (
+          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2">
+            <p className="text-xs font-semibold text-destructive">{result.n1Erreur}</p>
+          </div>
+        )}
+        {result.n1 && (
+          <div className="mt-3 rounded-md border border-border bg-secondary/40 px-3 py-2">
+            <p className="text-xs font-semibold">
+              Brouillard N-1 chargé : {result.n1.fichier} — exercice {result.n1.exercice}, période
+              {result.n1.du ? ` du ${result.n1.du}` : ""}
+              {result.n1.au ? ` au ${result.n1.au}` : ""} (
+              {result.n1.lignes.toLocaleString("fr-FR")}
+              écritures filtrées, {result.n1.pieces.toLocaleString("fr-FR")} pièces)
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              À-nouveaux d'ouverture tracés dans N-1 : {result.n1.ranTraces} non ambigus ·
+              {result.n1.ranAmbigus} ambigus · {result.n1.ranNonTraces} non retracés. Doublons
+              interexercices signalés : {result.n1.nbDoublonsInterExercices}. Les fiches citent
+              l'exercice, le fichier et la ligne Excel de chaque écriture utilisée ; les paires
+              interexercices respectent la chronologie (envoi N-1 avant réception N) et la
+              non-réutilisation.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="mb-4 flex flex-wrap gap-3">
@@ -1792,6 +1840,12 @@ function Rapprochements({ result }: { result: AnalysisResult }) {
                 <p className="num text-[11px] text-muted-foreground">
                   attendu {fmt(c.montantAttendu)} · rapproché {fmt(c.montantRapproche)}
                 </p>
+                {c.montantAttenduN1 !== undefined && (
+                  <p className="num text-[11px] text-muted-foreground">
+                    dont N-1 : attendu {fmt(c.montantAttenduN1 ?? 0)} · rapproché{" "}
+                    {fmt(c.montantRapprocheN1 ?? 0)}
+                  </p>
+                )}
                 <p
                   className={`mt-1 text-[11px] font-semibold uppercase ${COULEUR_STATUT[c.statut] ?? ""}`}
                 >
@@ -1827,6 +1881,7 @@ function Rapprochements({ result }: { result: AnalysisResult }) {
                       <thead className="text-muted-foreground">
                         <tr>
                           <th className="py-1 pr-2">Ligne</th>
+                          <th className="py-1 pr-2">Exercice</th>
                           <th className="py-1 pr-2">Journal</th>
                           <th className="py-1 pr-2">Pièce</th>
                           <th className="py-1 pr-2">Date</th>
@@ -1841,6 +1896,17 @@ function Rapprochements({ result }: { result: AnalysisResult }) {
                         {c.lignes.map((l, i) => (
                           <tr key={`${c.id}-${i}`}>
                             <td className="py-1 pr-2 font-semibold">{l.ligne}</td>
+                            <td className="py-1 pr-2">
+                              {l.exercice ?? "N"}
+                              {l.fichier ? (
+                                <span
+                                  className="block max-w-[10rem] truncate text-[10px] text-muted-foreground"
+                                  title={l.fichier}
+                                >
+                                  {l.fichier}
+                                </span>
+                              ) : null}
+                            </td>
                             <td className="py-1 pr-2">{l.journal}</td>
                             <td className="py-1 pr-2">{l.piece}</td>
                             <td className="py-1 pr-2">{l.date}</td>
@@ -1926,6 +1992,7 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
         {cellule("Non expliqués", t.nbNonExpliques, "text-destructive")}
         {cellule("Correspondances incorrectes", t.nbIncorrects, "text-destructive")}
         {cellule("Écritures sources utilisées", t.nbEcrituresSources)}
+        {cellule("Expliqués via N-1", t.nbExpliquesParN1, "text-accent-foreground")}
         {cellule(
           "Réutilisations conflictuelles",
           t.nbReutilisationsConflit,
@@ -1959,6 +2026,12 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
                   <p className="text-xs text-muted-foreground">
                     {e.objet || "Aucun objet correspondant"}
                   </p>
+                  {e.montantExpliqueN1 !== 0 && (
+                    <p className="num mt-1 text-xs text-accent-foreground">
+                      Ventilation : expliqué par N {fmt(e.montantExpliqueN)} Ar · complément N-1{" "}
+                      {fmt(e.montantExpliqueN1)} Ar (origine : {e.origine})
+                    </p>
+                  )}
                   {e.note && <p className="mt-1 text-xs text-accent-foreground">{e.note}</p>}
                 </div>
                 <div className="text-right">
@@ -1987,8 +2060,12 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
                   <div className="num max-h-56 space-y-0.5 overflow-y-auto text-xs">
                     {e.pieces.slice(0, 40).map((p, i) => (
                       <p key={`${key}-${i}`}>
+                        {p.exercice && p.exercice !== "" ? `${p.exercice} · ` : ""}
                         {p.journal} · pièce {p.piece} · {p.date} ·{" "}
                         <span className={p.net < 0 ? "text-destructive" : ""}>{fmt(p.net)}</span>
+                        {p.fichier ? (
+                          <span className="text-muted-foreground"> — {p.fichier}</span>
+                        ) : null}
                       </p>
                     ))}
                     {e.pieces.length > 40 && (

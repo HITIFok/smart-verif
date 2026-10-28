@@ -26,6 +26,14 @@ export interface EntryLine {
   /** N° de ligne dans le fichier Excel du brouillard (1 = ligne d'en-tête) :
    *  permet au comptable de retrouver chaque écriture originale. */
   ligne?: number;
+  /** Exercice comptable d'origine de l'écriture (ex. « 2025 » pour le
+   *  brouillard N-1, « 2026 » pour le brouillard N). Déduit de la dernière
+   *  date du brouillard — évite toute confusion entre deux écritures de
+   *  mêmes pièce/montant dans des exercices différents. */
+  exercice?: string;
+  /** Nom du fichier Excel source (traçabilité quand deux brouillards sont
+   *  importés : le comptable sait de quel fichier vient chaque ligne). */
+  fichier?: string;
 }
 
 export interface Anomaly {
@@ -219,6 +227,25 @@ export interface FamilleVerif {
   combinaisonEchec: boolean;
 }
 
+/** Brouillard N-1 chargé : identification du fichier et compteurs de
+ *  traçabilité des soldes d'ouverture (calculés par le moteur). */
+export interface InfoN1 {
+  fichier: string;
+  exercice: string;
+  lignes: number;
+  pieces: number;
+  /** Période couverte par le brouillard N-1 (dates ISO min/max). */
+  du: string;
+  au: string;
+  /** À-nouveaux RAN de N tracés dans N-1 (correspondance exacte compte +
+   *  tiers + montant), ambigus (plusieurs candidates) et non tracés. */
+  ranTraces: number;
+  ranAmbigus: number;
+  ranNonTraces: number;
+  /** Doublons inter-exercices détectés (même écriture dans N et N-1). */
+  nbDoublonsInterExercices: number;
+}
+
 export interface AnalysisResult {
   entites: EntitySummary[];
   /** Familles de clients soldés ensemble sur une banque partagée, triées par
@@ -238,6 +265,14 @@ export interface AnalysisResult {
    *  « Feuil2 » du classeur de vérification. Null si le classeur n'en porte
    *  aucun (ancien format). */
   validation: RapportValidation | null;
+  /** Brouillard N-1 (exercice précédent) importé : statistiques du fichier
+   *  complémentaire. Null si aucun N-1 n'a été fourni (import facultatif —
+   *  le moteur fonctionne à l'identique avec le brouillard N seul). */
+  n1: InfoN1 | null;
+  /** Erreur de lecture du brouillard N-1 (fichier illisible ou vide) :
+   *  l'analyse continue sur N seul et l'erreur est affichée honnêtement
+   *  au lieu de faire échouer toute l'analyse. */
+  n1Erreur?: string;
   stats: {
     lignes: number;
     pieces: number;

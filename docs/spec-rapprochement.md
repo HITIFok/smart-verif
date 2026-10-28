@@ -147,3 +147,98 @@ quadratique) ; jamais d'écriture créée ni de donnée source modifiée ; pas d
 données confidentielles dans les logs ; une écriture de lecture Excel ne
 devient jamais une « absence d'écriture » (en-tête localisé, lignes vides
 ignorées, dates invalides conservées vides et signalées).
+
+## 9. Extension interexercices — brouillard N-1 (optionnel)
+
+### 9.1 Principe
+
+L'exercice contrôlé reste N : les soldes, familles, anomalies et écarts de
+référence sont TOUJOURS calculés sur le seul brouillard N. Le brouillard N-1
+(ex. « BROUILLARD 2025 31082025.xlsx », 176 089 écritures, Σ D = Σ C =
+88 315 687 739,33 Ar) est une source complémentaire FACULTATIVE qui sert
+exclusivement au moteur de rapprochement (règles A/B/C) et à la traçabilité.
+Sans N-1, le moteur se comporte à l'identique de la version précédente
+(non-régression garantie par construction : toutes les extensions sont
+conditionnées à `piecesN1` non vide).
+
+### 9.2 Import et distinction des exercices
+
+`parseBrouillard(buffer, { exercice, fichier })` marque chaque écriture avec
+l'exercice d'origine (déduit de la dernière date du brouillard) et le nom du
+fichier source. La détection d'en-tête par contenu tolère les deux layouts
+réels : 10 colonnes (N 2026) et 12 colonnes (N-1 2025 avec « Référence » en
+col E, « Date échéance » et « Lettrage montant » décalés). Les clés de pièces
+N-1 sont préfixées `N1|` : aucune confusion possible entre deux écritures de
+pièces/montants identiques d'exercices différents.
+
+### 9.3 Règles étendues
+
+- **A_411 / C_627 — attendu supplémentaire N-1** : les encaissements
+  d'honoraires (411) et les frais bancaires (627 + 445600) de N-1 NON apurés
+  à la clôture N-1 (non couverts par des paires 580001 intra-N-1) s'ajoutent
+  à l'attendu de la banque concernée. Résidu calculé en NET par banque
+  (contrepassations et annulations N-1 réduisent l'attendu au lieu de
+  l'augmenter) et plafonné : l'apurement intra-N-1 ne consomme que des paires
+  dont la somme n'excède pas le résidu (jamais d'attendu négatif ni
+  d'attendu fictif). Couverture du résidu : paires inter-exercices (envoi
+  N-1 → réception N) plafonnées au résidu, puis paires intra-N restantes
+  (opération de N soldant un compte ouvert en N-1), elles aussi plafonnées.
+  La ventilation distingue interexercices et intra-N dans l'explication ;
+  les montants couverts figurent dans `montantRapprocheN1`.
+- **Fenêtre inter-exercices** : `FENETRE_N1_JOURS = 180` (couloir de fin
+  d'exercice) — la fenêtre de ±45 jours ne s'applique qu'aux paires
+  intra-N. Une contrepartie N-1 exige en plus la banque et le montant exacts
+  au centime, la chronologie (envoi avant réception) et la non-réutilisation.
+- **A_paiement / B_460_462 — justification N-1** : sans contrepartie intra-N,
+  le moteur cherche l'écriture d'origine dans N-1 (facture 401000/411000 de
+  mêmes tiers et montant ; imputation 460/462 similaire) pour documenter
+  « opération de N qui solde un compte ouvert en N-1 ». Le statut ne change
+  jamais sur la seule base de cette trace.
+- **OUVERTURE (nouveau contrôle)** : les à-nouveaux du journal RAN de N
+  portant sur des comptes de tiers (401/411/46x) sont tracés dans N-1 par
+  correspondance exacte (compte + tiers + montant au centime), désambiguïsés
+  par libellé. Fiches bornées aux 60 plus gros nets ; compteurs globaux
+  (tracés / ambigus / non tracés) affichés en tête d'onglet. Un solde
+  d'ouverture n'est jamais une anomalie en soi.
+- **Doublons inter-exercices** : la même écriture (journal + compte + tiers +
+  montant au centime + libellé normalisé) présente dans N ET N-1, non soldée
+  par lettrage Sage dans les deux exercices, est signalée `doublon_potentiel`
+  (reclassement d'exercice ou double saisie — à vérifier, jamais confirmé).
+
+### 9.4 Validation sur données réelles (27/10 N + 31/08 N-1)
+
+Sur le couple réel (brouillard N 166 520 lignes, brouillard N-1 176 089
+lignes, Σ D = Σ C = 88 315 687 739,33 Ar équilibré) : la validation, les
+familles, les anomalies et la balance sont STRICTEMENT identiques avec et
+sans N-1 (invariants vérifiés par scripts/validate-n1.ts) ; 155 décisions de
+fiches inchangées, 18 changées UNIQUEMENT via la ventilation N-1 documentée
+(4 correspondances soldées deviennent honnêtement « transfert partiel » :
+encaissements N-1 non apurés, ex. SANLAMALLIANZ AUTOFI +19 389 887,93 Ar,
+HOLCIM +25 978 809,56 Ar), 16 fiches gagnent de la traçabilité sans changer
+de décision ; 34 656 à-nouveaux d'ouverture tracés non ambigus (40 490
+ambigus affichés comme tels, 382 non retracés) ; 24 doublons
+interexercices réels signalés (300 à 3 300 Ar) ; 1 paire interexercices
+réelle trouvée (EASY TECH, 10 846 805,94 Ar) ; 40 fiches citent une
+écriture N-1 en source. Surcoût : ~12 s d'analyse pour 176 089 lignes.
+
+### 9.5 Anti double comptage
+
+Le registre 580001 porte l'exercice de chaque mouvement : une écriture N-1
+apurée en N-1 (paire intra-N-1) ne peut plus couvrir un écart de N ; une
+écriture ne couvre jamais deux contrôles ; les paires inter-exercices
+respectent la chronologie (impossible d'apparier un envoi N avec une
+réception N-1). Les écarts de référence (familles) restent calculés sur N
+seul : N-1 ne modifie jamais un montant de validation, il ne fait que
+documenter.
+
+### 9.6 Validation — ventilation
+
+Chaque écart de référence affiche : référence, expliqué par N (objet
+calculé), expliqué par N-1 (0 tant que les familles restent N-only —
+structure prête), total rapproché, résiduel, et une origine
+(`N` / `N-1` / `N+N-1`). Le rapport distingue les trois catégories sans
+jamais forcer un chiffre : sur les données réelles 27/10, les quatre
+résiduels partiels (±3 000 TELMA SA/STAR, 182 000 TALOUMIS, 23 400
+SANLAMALLIANZ AUTOFI) sont des divergences d'export brouillard/balance de N
+et les deux incorrects (BOOST/JBU 7 586 124) des ajustements manuels de la
+feuille — VÉRIFIÉ dans les données : aucun n'existe dans N-1.

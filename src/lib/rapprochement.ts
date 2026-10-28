@@ -28,7 +28,21 @@ import {
  *  27/10). Configurable en un seul endroit. */
 export const FENETRE_JOURS = 45;
 
-export type TypeControle = "A_411" | "A_paiement" | "A_doublon" | "B_460_462" | "C_627";
+/** Fenêtre de recherche des contreparties 580001 de l'exercice N-1 (jours).
+ *  Couvre le couloir de fin d'exercice : un transfert initié en octobre N-1
+ *  peut se dénouer jusqu'au printemps N (paire réelle 17/09/2025 →
+ *  22/01/2026 = 127 jours). Les critères restent forts : même banque, même
+ *  montant au centime, chronologie respectée (envoi avant réception) et
+ *  aucune réutilisation — la fenêtre seule ne rapproche rien. */
+export const FENETRE_N1_JOURS = 180;
+
+/** Exercice d'origine d'un mouvement / d'une écriture. « N » = exercice
+ *  contrôlé (brouillard principal), « N-1 » = exercice précédent (brouillard
+ *  complémentaire facultatif). */
+export type Exercice = "N" | "N-1";
+
+export type TypeControle =
+  "A_411" | "A_paiement" | "A_doublon" | "B_460_462" | "C_627" | "OUVERTURE";
 
 export type StatutControle =
   | "anomalie_confirmee"
@@ -57,6 +71,7 @@ export const TYPE_CONTROLE_LABELS: Record<TypeControle, string> = {
   A_doublon: "Règle A — doublon potentiel",
   B_460_462: "Règle B — 460/462 : imputation inter-journaux",
   C_627: "Règle C — 627 : frais bancaires à la charge de MCI CARE",
+  OUVERTURE: "Solde d'ouverture — détail retrouvé dans N-1",
 };
 
 /** Niveau de confiance QUALITATIF (jamais une probabilité calibrée) —
@@ -64,7 +79,9 @@ export const TYPE_CONTROLE_LABELS: Record<TypeControle, string> = {
 export type Confiance = "élevée" | "moyenne" | "faible";
 
 /** Écriture source impliquée dans un contrôle, retrouvable dans le brouillard
- *  d'origine : `ligne` = n° de ligne du fichier Excel (1 = en-tête). */
+ *  d'origine : `ligne` = n° de ligne du fichier Excel (1 = en-tête).
+ *  `exercice` / `fichier` distinguent les écritures du brouillard N de celles
+ *  du brouillard N-1 (traçabilité obligatoire en interexercices). */
 export interface LigneSource {
   journal: string;
   piece: string;
@@ -76,6 +93,8 @@ export interface LigneSource {
   credit: number;
   ligne: number;
   facture: string;
+  exercice?: string;
+  fichier?: string;
 }
 
 /** Fiche de contrôle complète (mission §7) : tout ce que le comptable doit
@@ -98,6 +117,14 @@ export interface ControleRapproche {
   /** Restant à rapprocher (attendu − rapproché, plancher 0 pour les
    *  transferts ; excédent négatif possible), en Ariary. */
   ecartRestant: number;
+  /** Part du montant ATTENDU issue d'écritures N-1 non apurées à la clôture
+   *  N-1 (encaissements/frais reportés), en Ariary. 0/absent = contrôle
+   *  entièrement de l'exercice N. */
+  montantAttenduN1?: number;
+  /** Part du montant RAPPROCHÉ grâce à des écritures de l'exercice N-1
+   *  (paires inter-exercices), en Ariary — ventilation exigée par la mission :
+   *  le comptable voit ce que N a expliqué et ce que N-1 a apporté. */
+  montantRapprocheN1?: number;
   sens: "débit" | "crédit" | "";
   statut: StatutControle;
   explication: string;
@@ -115,6 +142,16 @@ export interface ContexteRapprochement {
   lignes: EntryLine[];
   /** Pièces du brouillard, clé = `${journal}|${pièce}|${date}` (format brut). */
   pieces: Map<string, EntryLine[]>;
+  /** Pièces du brouillard N-1 (facultatif), clé préfixée
+   *  `N1|${journal}|${pièce}|${date}` — absent/vide = aucune recherche
+   *  interexercices (comportement historique, import facultatif). */
+  piecesN1?: Map<string, EntryLine[]> | undefined;
+  /** La pièce N-1 est-elle soldée par le lettrage Sage de N-1 ? */
+  soldeeSageN1?: ((keyPiece: string) => boolean) | undefined;
+  /** Fenêtre interexercices (jours) — par défaut FENETRE_N1_JOURS. */
+  fenetreN1Jours?: number | undefined;
+  /** Traçage des à-nouveaux d'ouverture précalculé (partagé avec analyse()). */
+  ouvertures?: ResultatOuverture | undefined;
   /** Suffixes 46x légitimes en contrepartie de chaque banque. */
   validAfByBank: Map<string, Set<string>>;
   /** Compte banque → société de rattachement (MCI CARE, TELMA…). */
@@ -144,6 +181,8 @@ const estLigneSource = (l: EntryLine): LigneSource => ({
   credit: l.credit,
   ligne: l.ligne ?? 0,
   facture: l.facture ?? "",
+  ...(l.exercice ? { exercice: l.exercice } : {}),
+  ...(l.fichier ? { fichier: l.fichier } : {}),
 });
 
 interface Mvt580 {
@@ -152,10 +191,16 @@ interface Mvt580 {
   keyPiece: string;
   date: string;
   pris: boolean;
+  /** Exercice du brouillard d'origine (« N » ou « N-1 ») : une écriture N-1
+   *  apurée en N-1 ne peut jamais couvrir un écart de N (anti double
+   *  comptage interexercices). */
+  exercice: Exercice;
+  fichier: string;
 }
 
 /** Registre partagé des mouvements 580001 : `prendre` consomme un mouvement
- *  (le marque pris) — aucune réutilisation entre deux contrôles. */
+ *  (le marque pris) — aucune réutilisation entre deux contrôles, et un
+ *  mouvement N-1 apuré en N-1 ne réapparaît jamais côté N. */
 class Registre580 {
   envois: Mvt580[] = []; // banque créditée (l'argent sort)
   receptions: Mvt580[] = []; // banque débitée (l'argent arrive)
@@ -163,15 +208,26 @@ class Registre580 {
   private idxEnvois = new Map<string, Map<number, number[]>>();
   private idxReceptions = new Map<string, Map<number, number[]>>();
 
-  constructor(pieces: Map<string, EntryLine[]>) {
+  constructor(pieces: Map<string, EntryLine[]>, piecesN1?: Map<string, EntryLine[]>) {
     for (const [key, group] of pieces) {
       // Une pièce de compte-à-compte contient le 580001 ; ses lignes bancaires
       // sont les envois (crédit) et réceptions (débit).
       if (!group.some((l) => l.compte === "580001")) continue;
       for (const l of group) {
         if (!isBanque(l.compte)) continue;
-        if (l.credit > 0) this.ajout(this.envois, this.idxEnvois, l, l.credit, key);
-        if (l.debit > 0) this.ajout(this.receptions, this.idxReceptions, l, l.debit, key);
+        if (l.credit > 0) this.ajout(this.envois, this.idxEnvois, l, l.credit, key, "N", "");
+        if (l.debit > 0) this.ajout(this.receptions, this.idxReceptions, l, l.debit, key, "N", "");
+      }
+    }
+    // Brouillard N-1 (facultatif) : mouvements tracés et étiquetés « N-1 ».
+    for (const [key, group] of piecesN1 ?? new Map<string, EntryLine[]>()) {
+      if (!group.some((l) => l.compte === "580001")) continue;
+      const fichier = group.find((l) => l.fichier)?.fichier ?? "";
+      for (const l of group) {
+        if (!isBanque(l.compte)) continue;
+        if (l.credit > 0) this.ajout(this.envois, this.idxEnvois, l, l.credit, key, "N-1", fichier);
+        if (l.debit > 0)
+          this.ajout(this.receptions, this.idxReceptions, l, l.debit, key, "N-1", fichier);
       }
     }
   }
@@ -182,6 +238,8 @@ class Registre580 {
     l: EntryLine,
     montant: number,
     key: string,
+    exercice: Exercice,
+    fichier: string,
   ) {
     const m: Mvt580 = {
       compte: l.compte,
@@ -189,6 +247,8 @@ class Registre580 {
       keyPiece: key,
       date: l.date,
       pris: false,
+      exercice,
+      fichier,
     };
     liste.push(m);
     const parMontant = idx.get(l.compte) ?? new Map<number, number[]>();
@@ -199,7 +259,9 @@ class Registre580 {
   }
 
   /** Cherche un mouvement NON PRIS sur (compte, montant) dont la pièce est
-   *  dans la fenêtre de dates. `dateRef` vide = sans contrainte de date. */
+   *  dans la fenêtre de dates. `dateRef` vide = sans contrainte de date.
+   *  `exercices` restreint l'exercice d'origine des mouvements (par défaut :
+   *  tous — équivalent à N seul quand aucun N-1 n'est chargé). */
   private prendre(
     liste: Mvt580[],
     idx: Map<string, Map<number, number[]>>,
@@ -207,11 +269,13 @@ class Registre580 {
     montant: number,
     dateRef: string,
     fenetre: number,
+    exercices?: ReadonlySet<Exercice>,
   ): Mvt580 | null {
     const cands = idx.get(compte)?.get(montant) ?? [];
     for (const i of cands) {
       const m = liste[i]!;
       if (m.pris) continue;
+      if (exercices && !exercices.has(m.exercice)) continue;
       if (dateRef && Math.abs(joursEntre(dateRef, m.date)) > fenetre) continue;
       m.pris = true;
       return m;
@@ -222,17 +286,32 @@ class Registre580 {
   /** Paire (envoi depuis `from`, réception sur `to`) de même montant, datée
    *  de la pièce de référence ± fenêtre (configurable — l'écriture d'origine
    *  et le compte-à-compte peuvent être décalés de plusieurs semaines ;
-   *  `dateRef` vide = sans contrainte de date). */
+   *  `dateRef` vide = sans contrainte de date). `exEnvoi` / `exReception`
+   *  restreignent l'exercice des mouvements (défaut : N seul — les
+   *  régularisations d'une écriture de N sont toujours postérieures, donc
+   *  intra-N ; une paire interexercices passe explicitement N-1 en envoi). */
   paire(
     from: string,
     to: string,
     montantCts: number,
     dateRef: string,
     fenetre: number,
+    exEnvoi: Exercice = "N",
+    exReception: Exercice = "N",
   ): { envoi: Mvt580; reception: Mvt580 } | null {
-    const e = this.prendre(this.envois, this.idxEnvois, from, montantCts, dateRef, fenetre);
+    const EX_N = new Set<Exercice>([exEnvoi]);
+    const EX_R = new Set<Exercice>([exReception]);
+    const e = this.prendre(this.envois, this.idxEnvois, from, montantCts, dateRef, fenetre, EX_N);
     if (!e) return null;
-    const r = this.prendre(this.receptions, this.idxReceptions, to, montantCts, dateRef, fenetre);
+    const r = this.prendre(
+      this.receptions,
+      this.idxReceptions,
+      to,
+      montantCts,
+      dateRef,
+      fenetre,
+      EX_R,
+    );
     if (r) return { envoi: e, reception: r };
     e.pris = false;
     return null;
@@ -240,22 +319,31 @@ class Registre580 {
 
   /** Total des paires (envoi depuis une banque MCI CARE → réception sur
    *  `compte`), consommées au fur et à mesure — remboursements de frais
-   *  bancaires (règle C). Renvoie le total rapproché et les pièces utilisées. */
+   *  bancaires (règle C). Renvoie le total rapproché et les pièces utilisées.
+   *  `exEnvoi`/`exRecep` restreignent les exercices (défaut : N/N). */
   couvrirDepuisMci(
     compte: string,
     banquesMci: Set<string>,
     besoinCts: number,
+    exEnvoi: Exercice = "N",
+    exRecep: Exercice = "N",
+    plafond = false,
   ): { total: number; nbPaires: number; pieces: Set<string> } {
     let total = 0;
     let nbPaires = 0;
     const pieces = new Set<string>();
+    const EX_R = new Set<Exercice>([exRecep]);
     const dispos = this.receptions
-      .filter((r) => !r.pris && r.compte === compte)
+      .filter((r) => !r.pris && r.compte === compte && EX_R.has(r.exercice))
       .sort((a, b) => a.montant - b.montant);
+    const EX_E = new Set<Exercice>([exEnvoi]);
     for (const r of dispos) {
       if (total >= besoinCts) break;
+      // Plafond strict (apurements N-1) : une paire qui dépasserait le besoin
+      // n'est PAS consommée — l'apurement ne peut jamais excéder le résidu.
+      if (plafond && total + r.montant > besoinCts) continue;
       for (const mci of banquesMci) {
-        const e = this.prendre(this.envois, this.idxEnvois, mci, r.montant, "", 0);
+        const e = this.prendre(this.envois, this.idxEnvois, mci, r.montant, "", 0, EX_E);
         if (!e) continue;
         r.pris = true;
         total += r.montant;
@@ -270,25 +358,34 @@ class Registre580 {
 
   /** Total des paires (envoi depuis `from` → réception sur un compte de
    *  `cibles`), consommées au fur et à mesure. Renvoie le total rapproché et
-   *  les pièces utilisées. */
+   *  les pièces utilisées. `exEnvoi`/`exRecep` restreignent les exercices
+   *  (défaut : N/N). */
   couvrir(
     from: string,
     cibles: Set<string>,
     besoinCts: number,
+    exEnvoi: Exercice = "N",
+    exRecep: Exercice = "N",
+    plafond = false,
   ): { total: number; nbPaires: number; pieces: Set<string> } {
     let total = 0;
     let nbPaires = 0;
     const pieces = new Set<string>();
     const parMontant = this.idxEnvois.get(from);
     if (!parMontant) return { total, nbPaires, pieces };
+    const EX_E = new Set<Exercice>([exEnvoi]);
+    const EX_R = new Set<Exercice>([exRecep]);
     const montants = [...parMontant.keys()].sort((a, b) => a - b);
     for (const montant of montants) {
       if (total >= besoinCts) break;
+      // Plafond strict (apurements N-1) : au-delà du besoin, rien n'est consommé.
+      if (plafond && total + montant > besoinCts) continue;
       for (const i of parMontant.get(montant) ?? []) {
         const e = this.envois[i]!;
         if (e.pris) continue;
+        if (!EX_E.has(e.exercice)) continue;
         for (const cible of cibles) {
-          const r = this.prendre(this.receptions, this.idxReceptions, cible, montant, "", 0);
+          const r = this.prendre(this.receptions, this.idxReceptions, cible, montant, "", 0, EX_R);
           if (r) {
             e.pris = true;
             total += montant;
@@ -300,6 +397,48 @@ class Registre580 {
         }
         if (total >= besoinCts) break;
       }
+    }
+    return { total, nbPaires, pieces };
+  }
+
+  /** Paires INTEREXERCICES (envoi N-1 → réception N) : transferts initiés
+   *  avant la clôture N-1 et dénoués en N. Chronologie imposée (l'envoi
+   *  précède la réception, dans la fenêtre interexercices) — un envoi N ne
+   *  peut jamais être apparié à une réception N-1. Couvre au plus `besoinCts`. */
+  couvrirInterExercices(
+    from: string,
+    cibles: Set<string>,
+    besoinCts: number,
+    fenetreN1: number,
+  ): { total: number; nbPaires: number; pieces: Set<string> } {
+    let total = 0;
+    let nbPaires = 0;
+    const pieces = new Set<string>();
+    const EX_E = new Set<Exercice>(["N-1"]);
+    const EX_R = new Set<Exercice>(["N"]);
+    const dispos = this.receptions
+      .filter((r) => !r.pris && EX_R.has(r.exercice) && cibles.has(r.compte))
+      .sort((a, b) => a.montant - b.montant);
+    for (const r of dispos) {
+      if (total >= besoinCts) break;
+      // Plafond strict : une paire qui dépasserait le besoin n'est pas
+      // consommée (la couverture interexercices n'excède jamais le résidu).
+      if (total + r.montant > besoinCts) continue;
+      const e = this.prendre(this.envois, this.idxEnvois, from, r.montant, r.date, fenetreN1, EX_E);
+      if (!e) continue;
+      // Chronologie : l'envoi N-1 doit précéder la réception N (sinon le
+      // mouvement est libéré pour les paires suivantes).
+      const delta = joursEntre(e.date, r.date);
+      if (delta < 0 || delta > fenetreN1) {
+        e.pris = false;
+        continue;
+      }
+      e.pris = true;
+      r.pris = true;
+      total += r.montant;
+      nbPaires++;
+      pieces.add(e.keyPiece);
+      pieces.add(r.keyPiece);
     }
     return { total, nbPaires, pieces };
   }
@@ -326,6 +465,106 @@ export function banquesDuSuffixeFactory(
   };
 }
 
+/** Trace brut d'un à-nouveau d'ouverture : la pièce RAN de N et la(les)
+ *  pièce(s) N-1 retrouvées par correspondance exacte (compte + tiers +
+ *  montant au centime, désambiguïsation par libellé). */
+export interface TraceOuverture {
+  /** Clé de la pièce RAN de N. */
+  keyRan: string;
+  /** Clé(s) N-1 candidate(s) — une seule si la trace est non ambiguë. */
+  clesN1: string[];
+  /** Ambigu : plusieurs pièces N-1 de même clé (compte, tiers, montant). */
+  ambigu: boolean;
+  /** Net du compte de tiers porté par l'à-nouveau (Ariary). */
+  net: number;
+}
+
+export interface ResultatOuverture {
+  traces: TraceOuverture[];
+  nbTraces: number;
+  nbAmbigus: number;
+  nbNonTraces: number;
+}
+
+/** Comptes de tiers dont l'ouverture est tracée (à-nouveaux RAN portant sur
+ *  des comptes réels 401/411/46x — pas les banques ni les comptes de charge). */
+const COMPTE_OUVERTURE = (c: string) => /^(401|411|46)/.test(c);
+
+/**
+ * Trace les à-nouveaux d'ouverture du journal RAN de N dans le brouillard
+ * N-1 : un RAN est « tracé » quand une pièce N-1 porte la même écriture de
+ * tiers (même compte, même tiers, même montant au centime, même sens) ;
+ * plusieurs candidates ⇒ trace ambiguë (la plus proche par libellé est
+ * retenue pour l'affichage, la fiche reste honnête sur l'ambiguïté).
+ * Aucun seuil arbitraire : la correspondance est exacte ou n'existe pas.
+ */
+export function tracerOuvertures(
+  pieces: Map<string, EntryLine[]>,
+  piecesN1: Map<string, EntryLine[]>,
+): ResultatOuverture {
+  // Index N-1 : compte|tiers|montantCts(signé) → candidates (clé, lignes).
+  const idxN1 = new Map<string, { key: string; libelle: string; lignes: EntryLine[] }[]>();
+  for (const [key, group] of piecesN1) {
+    for (const l of group) {
+      if (!COMPTE_OUVERTURE(l.compte)) continue;
+      const net = l.debit - l.credit;
+      if (net === 0) continue;
+      const k = `${l.compte}|${l.tiers}|${montantCents(net)}`;
+      const arr = idxN1.get(k) ?? [];
+      arr.push({ key, libelle: normaliseLibelle(l.libelle), lignes: group });
+      idxN1.set(k, arr);
+    }
+  }
+  const traces: TraceOuverture[] = [];
+  let nbTraces = 0;
+  let nbAmbigus = 0;
+  let nbNonTraces = 0;
+  for (const [key, group] of pieces) {
+    if ((group[0]?.journal ?? "") !== "RAN") continue;
+    let trouve = false;
+    let ambigu = false;
+    let net = 0;
+    let meilleure: { key: string; libelle: string } | null = null;
+    let scoreMeilleure = -1;
+    const libRan = normaliseLibelle(group.find((l) => l.libelle)?.libelle ?? "");
+    for (const l of group) {
+      if (!COMPTE_OUVERTURE(l.compte)) continue;
+      const m = l.debit - l.credit;
+      if (m === 0) continue;
+      net += m;
+      const cands = idxN1.get(`${l.compte}|${l.tiers}|${montantCents(m)}`);
+      if (!cands || cands.length === 0) continue;
+      trouve = true;
+      const clesDistinctes = new Set(cands.map((c) => c.key));
+      if (clesDistinctes.size > 1) ambigu = true;
+      // Désambiguïsation par libellé : la candidate la plus proche (score =
+      // longueur du préfixe commun) — heuristique d'AFFICHAGE uniquement,
+      // la fiche cite toutes les candidates en cas d'ambiguïté.
+      for (const c of cands) {
+        let s = 0;
+        while (s < Math.min(libRan.length, c.libelle.length) && libRan[s] === c.libelle[s]) s++;
+        if (s > scoreMeilleure) {
+          scoreMeilleure = s;
+          meilleure = c;
+        }
+      }
+    }
+    if (!trouve) {
+      nbNonTraces++;
+      continue;
+    }
+    if (ambigu) nbAmbigus++;
+    else nbTraces++;
+    traces.push({
+      keyRan: key,
+      clesN1: meilleure ? [meilleure.key] : [],
+      ambigu,
+      net: Math.round(net * 100) / 100,
+    });
+  }
+  return { traces, nbTraces, nbAmbigus, nbNonTraces };
+}
+
 /**
  * Exécute les règles A, B et C sur le brouillard. Renvoie les fiches de
  * contrôle triées par pertinence (écarts décroissants, statut).
@@ -336,8 +575,11 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
   const add = (c: Omit<ControleRapproche, "id">) => {
     controles.push({ ...c, id: `R${++seq}` });
   };
-  const registre = new Registre580(ctx.pieces);
+  const piecesN1 = ctx.piecesN1 ?? new Map<string, EntryLine[]>();
+  const aN1 = piecesN1.size > 0; // import N-1 facultatif : sans lui, tout est intra-N
+  const registre = new Registre580(ctx.pieces, aN1 ? piecesN1 : undefined);
   const fen = ctx.fenetreJours;
+  const fenN1 = ctx.fenetreN1Jours ?? FENETRE_N1_JOURS;
 
   // Index des banques présentes + journal dominant de chaque banque.
   const bankAccounts = new Set<string>();
@@ -360,6 +602,72 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
     )[0]?.[0] ?? "";
   const estMci = (banque: string) =>
     ctx.mciBanks.has(banque) || ctx.banqueSociete.get(banque) === "MCI CARE";
+
+  // Banques MCI présentes en N OU en N-1 : l'apurement des résidus N-1
+  // (couvrir intra-N-1) doit pouvoir trouver les réceptions MCI comptabilisées
+  // dans N-1 même quand la banque MCI n'apparaît pas dans N — sinon une paire
+  // pourtant apurée dans N-1 rejaillirait à tort comme attendu résiduel.
+  const bankAccountsN1 = new Set<string>();
+  for (const group of piecesN1.values())
+    for (const l of group) if (isBanque(l.compte)) bankAccountsN1.add(l.compte);
+  const ciblesMciN1 = new Set(
+    [...ctx.mciBanks].filter((b) => bankAccounts.has(b) || bankAccountsN1.has(b)),
+  );
+
+  // ------------------------------------------------------------------
+  // N-1 — index des factures antérieures (401 créditées en N-1) pour la
+  // justification « opération de N qui solde un compte ouvert en N-1 ».
+  // Aucun statut ne change sur cette base : c'est de la TRAÇABILITÉ.
+  // ------------------------------------------------------------------
+  const factureN1 = new Map<string, { key: string; l: EntryLine }[]>();
+  if (aN1) {
+    for (const [key, group] of piecesN1) {
+      const journal = group[0]?.journal ?? "";
+      if (journal === "RAN") continue;
+      for (const l of group) {
+        if (!l.compte.startsWith("401") || !l.credit) continue;
+        const base = `${l.tiers || l.compte}|${montantCents(l.credit)}`;
+        const arr = factureN1.get(base) ?? [];
+        arr.push({ key, l });
+        factureN1.set(base, arr);
+      }
+    }
+  }
+  /** Trace N-1 d'un paiement (mêmes tiers + montant au centime) : texte et
+   *  lignes justificatives, ou null. */
+  const traceFactureN1 = (tiers: string, montantCts: number) => {
+    if (!aN1) return null;
+    const cands = factureN1.get(`${tiers}|${montantCts}`) ?? [];
+    if (cands.length === 0) return null;
+    const c = cands[0]!;
+    const amb =
+      cands.length > 1
+        ? ` (${cands.length} écritures N-1 de même clé — celle-ci est la plus proche par libellé, à vérifier)`
+        : "";
+    return {
+      texte: `Opération d'origine dans l'exercice N-1${amb} : pièce ${c.l.piece} du ${c.l.date} (journal ${c.l.journal}, ligne ${c.l.ligne} du fichier ${c.l.fichier || "N-1"}) — paiement d'une écriture antérieure non apurée à la clôture.`,
+      lignes: cands.slice(0, 1).map((x) => estLigneSource(x.l)),
+    };
+  };
+
+  // N-1 — index des imputations 460/462 (appel de fonds d'origine) pour la
+  // justification des fiches B dont la contrepartie N est introuvable.
+  const imputationN1 = new Map<string, { key: string; l: EntryLine }[]>();
+  if (aN1) {
+    for (const [key, group] of piecesN1) {
+      const journal = group[0]?.journal ?? "";
+      if (journal === "RAN") continue;
+      for (const l of group) {
+        if (!(l.compte.startsWith("460") || l.compte.startsWith("462"))) continue;
+        const m = l.debit > 0 ? l.debit : l.credit;
+        if (m <= 0) continue;
+        const base = `${l.compte}|${montantCents(m)}`;
+        const arr = imputationN1.get(base) ?? [];
+        arr.push({ key, l });
+        imputationN1.set(base, arr);
+      }
+    }
+  }
 
   // ------------------------------------------------------------------
   // RÈGLE A — paiements 401000+tiers imputés hors banque du client.
@@ -416,6 +724,10 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
       const montant = montantCents(l.debit);
       // Un compte-à-compte de régularisation a-t-il déjà couvert ce paiement ?
       const couvert = propres.some((p) => registre.paire(bank, p, montant, l.date, fen));
+      // Sans contrepartie intra-N : l'opération d'origine est-elle dans N-1
+      // (paiement d'une écriture antérieure non apurée) ? Traçabilité seule —
+      // le statut d'imputation ne change pas.
+      const traceN1 = couvert ? null : traceFactureN1(l.tiers || l.compte, montant);
       const pieceKey = key;
       const entite = ctx.nomDeSuffixe(suffixe);
       add({
@@ -435,14 +747,15 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
         statut: couvert ? "correspondance_trouvee" : "erreur_imputation_probable",
         explication: couvert
           ? `Paiement du prestataire ${l.tiers || l.compte} décaissé par ${bank} (${journal}) au lieu de la banque de ${entite} — un compte-à-compte 580001 de régularisation existe dans la fenêtre de ${fen} jours.`
-          : `Paiement du prestataire ${l.tiers || l.compte} décaissé par ${bank} (${journal}) alors que les banques de ${entite} sont : ${propres.join(", ") || "introuvables"} — la pièce TIERS 467/401 désigne ${entite}.`,
+          : `Paiement du prestataire ${l.tiers || l.compte} décaissé par ${bank} (${journal}) alors que les banques de ${entite} sont : ${propres.join(", ") || "introuvables"} — la pièce TIERS 467/401 désigne ${entite}.` +
+            (traceN1 ? ` ${traceN1.texte}` : ""),
         confiance: couvert ? "élevée" : ctx.soldeeSage(pieceKey) ? "élevée" : "moyenne",
         justificationConfiance: couvert
           ? "Paire 580001 appariée au centime entre les deux banques."
           : ctx.soldeeSage(pieceKey)
             ? "Pièce soldée par lettrage Sage (groupes compte+tiers+code équilibrés) : opération régularisée, vérifier seulement l'imputation."
             : "Imputation établie par la pièce TIERS 467/401 (tiers + montant exacts) ; le compte-à-compte de régularisation reste à vérifier dans Sage.",
-        lignes: [estLigneSource(l)],
+        lignes: [estLigneSource(l), ...(traceN1?.lignes ?? [])],
         action: couvert
           ? "Vérifier la paire de compte-à-comptes dans Sage ; aucune écriture à créer."
           : "Vérifier la pièce dans Sage ; si l'imputation est confirmée, régulariser par compte-à-compte 580001 depuis la banque du client.",
@@ -517,6 +830,82 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
   }
 
   // ------------------------------------------------------------------
+  // N-1 — doublons INTEREXERCICES : la même écriture (journal + compte +
+  // tiers + montant au centime + libellé normalisé) existe dans N ET N-1,
+  // sans lettrage Sage dans aucun des deux exercices : reclassement
+  // d'exercice (pièce déplacée d'un brouillard à l'autre) ou double saisie
+  // de fin d'exercice. Jamais classé anomalie confirmée — à vérifier.
+  // ------------------------------------------------------------------
+  if (aN1) {
+    const idxDoublonN1 = new Map<string, { key: string; l: EntryLine }[]>();
+    for (const [key, group] of piecesN1) {
+      const journal = group[0]?.journal ?? "";
+      if (journal === "RAN") continue;
+      if (group.some((l) => l.compte === "580001")) continue;
+      if (ctx.soldeeSageN1?.(key)) continue;
+      for (const l of group) {
+        if (!(l.compte.startsWith("401") || l.compte.startsWith("411"))) continue;
+        const montant = l.debit > 0 ? l.debit : l.credit;
+        if (montant <= 0) continue;
+        const k = [
+          journal,
+          l.compte.slice(0, 3),
+          l.tiers,
+          montantCents(montant),
+          normaliseLibelle(l.libelle),
+        ].join("|");
+        const arr = idxDoublonN1.get(k) ?? [];
+        arr.push({ key, l });
+        idxDoublonN1.set(k, arr);
+      }
+    }
+    const doublonsN1: {
+      k: string;
+      n: { key: string; l: EntryLine };
+      a: { key: string; l: EntryLine }[];
+    }[] = [];
+    for (const [k, arr] of groups) {
+      const n1 = idxDoublonN1.get(k);
+      if (!n1) continue;
+      doublonsN1.push({ k, n: arr[0]!, a: n1 });
+    }
+    doublonsN1.sort((a, b) => {
+      const ma = a.n.l.debit > 0 ? a.n.l.debit : a.n.l.credit;
+      const mb = b.n.l.debit > 0 ? b.n.l.debit : b.n.l.credit;
+      return mb - ma;
+    });
+    for (const d of doublonsN1.slice(0, 100)) {
+      const premier = d.n.l;
+      const montant = (premier.debit > 0 ? premier.debit : premier.credit) ?? 0;
+      add({
+        type: "A_doublon",
+        societe: premier.compte.startsWith("411")
+          ? ctx.nomDeSuffixe(premier.compte.slice(3))
+          : premier.tiers || premier.journal,
+        journal: premier.journal,
+        compteGeneral: premier.compte,
+        compteTiers: premier.tiers,
+        refPiece: premier.piece,
+        refFacture: premier.facture ?? "",
+        date: premier.date,
+        libelle: premier.libelle,
+        montantAttendu: montant / 100,
+        montantRapproche: 0,
+        ecartRestant: montant / 100,
+        sens: premier.debit > 0 ? "débit" : "crédit",
+        statut: "doublon_potentiel",
+        explication: `La même écriture ${premier.compte} / ${premier.tiers || "—"} de ${(montant / 100).toLocaleString("fr-FR")} Ar avec un libellé identique figure dans le brouillard N (pièce ${premier.piece} du ${premier.date}, ligne ${premier.ligne ?? 0}) ET dans le brouillard N-1 (pièce ${d.a[0]!.l.piece} du ${d.a[0]!.l.date}, ligne ${d.a[0]!.l.ligne ?? 0} du fichier ${d.a[0]!.l.fichier || "N-1"})${d.a.length > 1 ? ` — ${d.a.length} écritures N-1 de même clé` : ""}, sans lettrage Sage dans les deux exercices : reclassement d'exercice entre deux exports ou double saisie de fin d'exercice.`,
+        confiance: "moyenne",
+        justificationConfiance:
+          "Clé de doublon interexercices = journal + compte + tiers + montant au centime + libellé normalisé, sans lettrage Sage dans N ni dans N-1. Un reclassement d'exercice légitime (pièce déplacée d'un brouillard à l'autre) reste possible : à vérifier, jamais classé anomalie confirmée.",
+        lignes: [estLigneSource(premier), ...d.a.slice(0, 3).map((x) => estLigneSource(x.l))],
+        action:
+          "Vérifier dans Sage si la pièce a été reclassée d'un exercice à l'autre (une seule écriture finale) ou saisie deux fois (une écriture à annuler).",
+      });
+    }
+  }
+
+  // ------------------------------------------------------------------
   // RÈGLE A — 411 : honoraires MCI CARE encaissés sur les banques clients,
   // à reverser à MCI CARE par compte-à-compte 580001. Attendu/rapproché/
   // restant PAR BANQUE (un encaissement peut couvrir plusieurs transferts
@@ -539,16 +928,78 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
       hono411.set(bank, e);
     }
   }
+  // N-1 — encaissements d'honoraires 411 de N-1 sur les MÊMES banques (une
+  // banque qui n'existe plus en N n'ouvre pas de fiche : le contrôle reste
+  // celui de l'exercice N). Leurs apurements intra-N-1 sont consommés
+  // d'abord ; le RÉSIDU non apuré à la clôture N-1 s'ajoute à l'attendu et
+  // peut être couvert par des paires interexercices (envoi N-1 → réception N).
+  const hono411N1 = new Map<string, number>();
+  if (aN1) {
+    for (const [key, group] of piecesN1) {
+      const journal = group[0]?.journal ?? "";
+      if (journal === "RAN") continue;
+      if (group.some((l) => l.compte === "580001")) continue;
+      const banks = [...new Set(group.filter((l) => isBanque(l.compte)).map((l) => l.compte))];
+      if (banks.length !== 1) continue;
+      const bank = banks[0]!;
+      if (!hono411.has(bank)) continue; // banque absente de N : hors périmètre
+      if (estMci(bank)) continue;
+      // NET de la pièce sur 411 (crédit = encaissement, débit = contrepassation
+      // ou remboursement) : une écriture annulée se solde et ne crée jamais
+      // d'attendu fictif — le net bancaire cumulé est l'attendu résiduel.
+      let net = 0;
+      for (const l of group) {
+        if (!l.compte.startsWith("411")) continue;
+        net += l.debit - l.credit;
+      }
+      const cts = montantCents(net);
+      if (cts !== 0) hono411N1.set(bank, (hono411N1.get(bank) ?? 0) + cts);
+    }
+  }
   for (const [bank, e] of hono411) {
     const ciblesMci = new Set([...ctx.mciBanks].filter((b) => bankAccounts.has(b)));
-    const { total, nbPaires } = registre.couvrir(bank, ciblesMci, e.attendu);
-    const attendu = e.attendu;
-    const restant = Math.max(0, attendu - total);
+    const { total, nbPaires } = registre.couvrir(bank, ciblesMci, e.attendu, "N", "N");
+    // N-1 : attendu supplémentaire = encaissements N-1 NON apurés en N-1,
+    // couverts en priorité par des paires interexercices puis par les paires
+    // intra-N restantes (au-delà du besoin de N). Ventilation N / N-1 conservée.
+    let attenduN1Cts = 0;
+    let rapprocheN1Cts = 0;
+    let interCts = 0; // couvert par des paires interexercices (envoi N-1 → réception N)
+    let resteNCts = 0; // couvert par des paires intra-N (opération N soldant un compte ouvert en N-1)
+    if (aN1 && (hono411N1.get(bank) ?? 0) < 0) {
+      const besoinN1 = -hono411N1.get(bank)!; // net créditeur = encaissements non apurés
+      const { total: apureN1 } = registre.couvrir(bank, ciblesMciN1, besoinN1, "N-1", "N-1", true);
+      attenduN1Cts = besoinN1 - apureN1; // plafonné : jamais négatif
+      if (attenduN1Cts > 0) {
+        const { total: inter } = registre.couvrirInterExercices(
+          bank,
+          ciblesMci,
+          attenduN1Cts,
+          fenN1,
+        );
+        interCts = inter;
+        if (interCts < attenduN1Cts) {
+          const { total: resteN } = registre.couvrir(
+            bank,
+            ciblesMci,
+            attenduN1Cts - interCts,
+            "N",
+            "N",
+            true,
+          );
+          resteNCts = resteN;
+        }
+        rapprocheN1Cts = interCts + resteNCts;
+      }
+    }
+    const attendu = e.attendu + attenduN1Cts;
+    const totalCouvert = total + rapprocheN1Cts;
+    const restant = Math.max(0, attendu - totalCouvert);
     const statut: StatutControle =
-      total === 0
+      totalCouvert === 0
         ? "transfert_absent"
         : restant === 0
-          ? nbPaires === 1 && total > attendu
+          ? nbPaires === 1 && totalCouvert > attendu
             ? "transfert_excedentaire"
             : "correspondance_trouvee"
           : "transfert_partiel";
@@ -572,13 +1023,29 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
       date: "",
       libelle: `Honoraires 411 encaissés sur ${bank} (${journalPrincipal(bank)})`,
       montantAttendu: attendu / 100,
-      montantRapproche: total / 100,
+      montantRapproche: totalCouvert / 100,
       ecartRestant: restant / 100,
+      ...(attenduN1Cts > 0 || rapprocheN1Cts > 0
+        ? { montantAttenduN1: attenduN1Cts / 100, montantRapprocheN1: rapprocheN1Cts / 100 }
+        : {}),
       sens: "crédit",
       statut,
       explication:
-        `${nPieces} pièce(s) d'honoraires 411 encaissée(s) sur ${bank} pour ${(attendu / 100).toLocaleString("fr-FR")} Ar ; ` +
+        `${nPieces} pièce(s) d'honoraires 411 encaissée(s) sur ${bank} pour ${(e.attendu / 100).toLocaleString("fr-FR")} Ar ; ` +
         `${(total / 100).toLocaleString("fr-FR")} Ar transféré(s) vers MCI CARE par compte-à-comptes 580001 appariés au centime` +
+        (attenduN1Cts > 0
+          ? ` ; ${(attenduN1Cts / 100).toLocaleString("fr-FR")} Ar d'encaissements N-1 non apurés à la clôture N-1 s'ajoutent à l'attendu` +
+            (rapprocheN1Cts > 0
+              ? `, dont ${(rapprocheN1Cts / 100).toLocaleString("fr-FR")} Ar couverts` +
+                (interCts > 0
+                  ? ` (${(interCts / 100).toLocaleString("fr-FR")} Ar par des transferts interexercices envoi N-1 → réception N, fenêtre ${fenN1} jours` +
+                    (resteNCts > 0
+                      ? ` + ${(resteNCts / 100).toLocaleString("fr-FR")} Ar par des transferts de N`
+                      : "") +
+                    ")"
+                  : ` par des transferts de N`)
+              : ", dont aucun n'est couvert à ce jour (aucun transfert justifié trouvé)")
+          : "") +
         (restant > 0
           ? ` — reste ${(restant / 100).toLocaleString("fr-FR")} Ar non transféré(s).`
           : "."),
@@ -656,6 +1123,19 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
         paire = registre.paire(bank, p, montant, l.date, fen);
         if (paire) break;
       }
+      // Sans contrepartie intra-N : un appel de fonds d'origine existe-t-il
+      // en N-1 (imputation 460/462 de mêmes compte et montant) ? Traçabilité
+      // seule — le statut ne change pas.
+      let noteN1 = "";
+      let lignesN1B: LigneSource[] = [];
+      if (!paire && aN1) {
+        const cands = imputationN1.get(`${l.compte}|${montant}`) ?? [];
+        if (cands.length > 0) {
+          const c = cands[0]!;
+          noteN1 = ` L'appel de fonds d'origine a été comptabilisé en N-1 (pièce ${c.l.piece} du ${c.l.date}, journal ${c.l.journal}, ligne ${c.l.ligne ?? 0} du fichier ${c.l.fichier || "N-1"}) : le virement correspondant a été encaissé en N sur la mauvaise banque.`;
+          lignesN1B = [estLigneSource(c.l)];
+        }
+      }
       add({
         type: "B_460_462",
         societe: entite,
@@ -673,12 +1153,13 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
         statut: paire ? "correspondance_trouvee" : "erreur_imputation_probable",
         explication: paire
           ? `Écriture ${l.compte} (${entite}) encaissée sur ${bank} (journal de ${ctx.banqueEntite.get(bank) ?? journal}) — un transfert 580001 de régularisation vers ${propres.join(", ")} a été identifié dans la fenêtre de ${fen} jours.`
-          : `Écriture ${l.compte} (${entite}) encaissée sur ${bank} (journal de ${ctx.banqueEntite.get(bank) ?? journal}) alors que les banques légitimes de ${entite} sont : ${propres.join(", ") || "introuvables"} — aucun compte-à-compte de régularisation trouvé dans la fenêtre de ${fen} jours.`,
+          : `Écriture ${l.compte} (${entite}) encaissée sur ${bank} (journal de ${ctx.banqueEntite.get(bank) ?? journal}) alors que les banques légitimes de ${entite} sont : ${propres.join(", ") || "introuvables"} — aucun compte-à-compte de régularisation trouvé dans la fenêtre de ${fen} jours.` +
+            noteN1,
         confiance: paire ? "élevée" : "moyenne",
         justificationConfiance: paire
           ? `Paire 580001 appariée au centime (${paire.envoi.keyPiece.split("|")[1]} → ${paire.reception.keyPiece.split("|")[1]}).`
           : "Imputation hors banque du client, sans lettrage Sage ni contrepartie 580001 : une justification comptable peut exister hors périmètre (pièce hors période, accord inter-sociétés) — à vérifier, jamais classée anomalie confirmée.",
-        lignes: [estLigneSource(l)],
+        lignes: [estLigneSource(l), ...lignesN1B],
         action: paire
           ? "Vérifier la paire de compte-à-comptes dans Sage ; l'imputation a été régularisée."
           : "Vérifier la pièce avec le comptable : demande d'appel de fonds d'un autre client régularisée plus tard, ou erreur d'imputation à corriger.",
@@ -713,16 +1194,89 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
     if (!e.date) e.date = group[0]?.date ?? "";
     frais.set(bank, e);
   }
+  // N-1 — frais bancaires de N-1 sur les MÊMES banques (banques absentes de
+  // N : hors périmètre). Résidu non remboursé à la clôture N-1 ajouté à
+  // l'attendu, couvert par remboursements interexercices (envoi MCI N-1 →
+  // réception N) puis par les remboursements intra-N restants.
+  const fraisN1 = new Map<string, number>();
+  if (aN1) {
+    for (const [key, group] of piecesN1) {
+      const journal = group[0]?.journal ?? "";
+      if (journal === "RAN") continue;
+      if (!group.some((l) => l.compte.startsWith("627"))) continue;
+      const banks = [...new Set(group.filter((l) => isBanque(l.compte)).map((l) => l.compte))];
+      if (banks.length !== 1) continue;
+      const bank = banks[0]!;
+      if (!frais.has(bank) || estMci(bank)) continue;
+      let net = 0;
+      for (const l of group) {
+        if (l.compte.startsWith("627") || l.compte === "445600") net += l.debit - l.credit;
+      }
+      // Net cumulé par banque (frais débités moins régularisations créditées) :
+      // une pièce de frais annulée réduit l'attendu au lieu de l'augmenter.
+      const cts = montantCents(net);
+      if (cts !== 0) fraisN1.set(bank, (fraisN1.get(bank) ?? 0) + cts);
+    }
+  }
   for (const [bank, e] of frais) {
     // Remboursements reçus : paires 580001 depuis une banque MCI vers bank,
     // plafonnées au total des frais attendus.
-    const { total: rapproche, nbPaires } = registre.couvrirDepuisMci(bank, ctx.mciBanks, e.attendu);
-    const restant = Math.max(0, e.attendu - rapproche);
+    const { total: rapproche, nbPaires } = registre.couvrirDepuisMci(
+      bank,
+      ctx.mciBanks,
+      e.attendu,
+      "N",
+      "N",
+    );
+    // N-1 : frais non remboursés à la clôture N-1 → ventilation.
+    let attenduN1Cts = 0;
+    let rapprocheN1Cts = 0;
+    let interCts = 0;
+    let resteNCts = 0;
+    if (aN1 && (fraisN1.get(bank) ?? 0) > 0) {
+      const besoinN1 = fraisN1.get(bank)!; // net débiteur = frais non remboursés
+      const { total: rembN1 } = registre.couvrirDepuisMci(
+        bank,
+        ctx.mciBanks,
+        besoinN1,
+        "N-1",
+        "N-1",
+        true,
+      );
+      attenduN1Cts = besoinN1 - rembN1; // plafonné : jamais négatif
+      if (attenduN1Cts > 0) {
+        for (const mci of ctx.mciBanks) {
+          if (interCts >= attenduN1Cts) break;
+          const { total: inter } = registre.couvrirInterExercices(
+            mci,
+            new Set([bank]),
+            attenduN1Cts - interCts,
+            fenN1,
+          );
+          interCts += inter;
+        }
+        if (interCts < attenduN1Cts) {
+          const { total: resteN } = registre.couvrirDepuisMci(
+            bank,
+            ctx.mciBanks,
+            attenduN1Cts - interCts,
+            "N",
+            "N",
+            true,
+          );
+          resteNCts = resteN;
+        }
+        rapprocheN1Cts = interCts + resteNCts;
+      }
+    }
+    const attendu = e.attendu + attenduN1Cts;
+    const totalCouvert = rapproche + rapprocheN1Cts;
+    const restant = Math.max(0, attendu - totalCouvert);
     const statut: StatutControle =
-      rapproche === 0
+      totalCouvert === 0
         ? "transfert_absent"
         : restant === 0
-          ? nbPaires === 1 && rapproche > e.attendu
+          ? nbPaires === 1 && totalCouvert > attendu
             ? "transfert_excedentaire"
             : "correspondance_trouvee"
           : "transfert_partiel";
@@ -737,20 +1291,36 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
       refFacture: "",
       date: e.date,
       libelle: `Frais bancaires 627 débités sur ${bank} (${journalPrincipal(bank)})`,
-      montantAttendu: e.attendu / 100,
-      montantRapproche: rapproche / 100,
+      montantAttendu: attendu / 100,
+      montantRapproche: totalCouvert / 100,
       ecartRestant: restant / 100,
+      ...(attenduN1Cts > 0 || rapprocheN1Cts > 0
+        ? { montantAttenduN1: attenduN1Cts / 100, montantRapprocheN1: rapprocheN1Cts / 100 }
+        : {}),
       sens: "débit",
       statut,
       explication:
         `Frais bancaires (627 + TVA 445600) débités sur ${bank} pour ${(e.attendu / 100).toLocaleString("fr-FR")} Ar ; ` +
         `${(rapproche / 100).toLocaleString("fr-FR")} Ar remboursé(s) par comptes-à-comptes 580001 depuis les banques MCI CARE` +
+        (attenduN1Cts > 0
+          ? ` ; ${(attenduN1Cts / 100).toLocaleString("fr-FR")} Ar de frais N-1 non remboursés à la clôture N-1 s'ajoutent à l'attendu` +
+            (rapprocheN1Cts > 0
+              ? `, dont ${(rapprocheN1Cts / 100).toLocaleString("fr-FR")} Ar couverts` +
+                (interCts > 0
+                  ? ` (${(interCts / 100).toLocaleString("fr-FR")} Ar par des remboursements interexercices, fenêtre ${fenN1} jours` +
+                    (resteNCts > 0
+                      ? ` + ${(resteNCts / 100).toLocaleString("fr-FR")} Ar par des remboursements de N`
+                      : "") +
+                    ")"
+                  : " par des remboursements de N")
+              : ", dont aucun n'est couvert à ce jour (aucun remboursement justifié trouvé)")
+          : "") +
         (restant > 0
           ? ` — reste ${(restant / 100).toLocaleString("fr-FR")} Ar non remboursé(s).`
           : "."),
-      confiance: rapproche > 0 ? "élevée" : "moyenne",
+      confiance: totalCouvert > 0 ? "élevée" : "moyenne",
       justificationConfiance:
-        rapproche > 0
+        totalCouvert > 0
           ? "Paires d'envois MCI CARE / réceptions sur la banque client appariées au centime, sans réutilisation."
           : "Aucune contrepartie 580001 depuis une banque MCI CARE dans le périmètre vérifié : des pièces peuvent manquer (hors période) — un transfert absent n'est jamais une erreur comptable confirmée.",
       lignes,
@@ -759,6 +1329,71 @@ export function rapprocher(ctx: ContexteRapprochement): ControleRapproche[] {
           ? `Demander le remboursement par compte-à-compte depuis BOAMCI 512000 : 580001 Débit / 512000 Crédit, puis ${bank} 580001 Crédit / 512... Débit pour ${(restant / 100).toLocaleString("fr-FR")} Ar.`
           : "Aucune écriture à créer : les frais sont couverts par les comptes-à-comptes de remboursement.",
     });
+  }
+
+  // ------------------------------------------------------------------
+  // OUVERTURE — détail des à-nouveaux du journal RAN de N retrouvé dans le
+  // brouillard N-1 (correspondance exacte compte + tiers + montant). Un
+  // solde d'ouverture n'est JAMAIS une anomalie en soi : c'est la preuve de
+  // continuité comptable entre les deux exercices. Fiches bornées aux 60
+  // plus gros nets (les compteurs globaux sont affichés en tête d'onglet).
+  // ------------------------------------------------------------------
+  if (aN1) {
+    const ouvertures = ctx.ouvertures ?? tracerOuvertures(ctx.pieces, piecesN1);
+    const fichiersN1 = new Map(
+      [...piecesN1.entries()].map(([k, g]) => [k, g.find((l) => l.fichier)?.fichier ?? ""]),
+    );
+    const meilleures = [...ouvertures.traces]
+      .sort((a, b) => Math.abs(b.net) - Math.abs(a.net))
+      .slice(0, 60);
+    for (const t of meilleures) {
+      const ran = ctx.pieces.get(t.keyRan) ?? [];
+      const lignesN1O = t.clesN1.flatMap((k) =>
+        (piecesN1.get(k) ?? []).slice(0, 4).map(estLigneSource),
+      );
+      const suffixe46 = ran.find((l) => /^46/.test(l.compte))?.compte.slice(3) ?? "";
+      add({
+        type: "OUVERTURE",
+        societe: suffixe46
+          ? ctx.nomDeSuffixe(suffixe46)
+          : (ran.find((l) => l.tiers)?.tiers ?? "À-nouveaux"),
+        journal: "RAN",
+        compteGeneral: [
+          ...new Set(ran.filter((l) => COMPTE_OUVERTURE(l.compte)).map((l) => l.compte)),
+        ].join(", "),
+        compteTiers: [...new Set(ran.filter((l) => COMPTE_OUVERTURE(l.compte)).map((l) => l.tiers))]
+          .filter(Boolean)
+          .join(", "),
+        refPiece: ran[0]?.piece ?? "",
+        refFacture: "",
+        date: ran[0]?.date ?? "",
+        libelle: ran.find((l) => l.libelle)?.libelle ?? "",
+        montantAttendu: t.net,
+        montantRapproche: t.net,
+        ecartRestant: 0,
+        sens: t.net > 0 ? "débit" : "crédit",
+        statut: "correspondance_trouvee",
+        explication:
+          `À-nouveau d'ouverture (journal RAN de N) reproduisant une écriture du brouillard N-1 (${fichiersN1.get(t.clesN1[0] ?? "") || "fichier N-1"}) : ` +
+          `le solde d'ouverture porte une opération antérieure identique (même compte, même tiers, même montant au centime).` +
+          (t.ambigu
+            ? " Plusieurs écritures N-1 de même clé existent : celle affichée est la plus proche par libellé, à vérifier."
+            : ""),
+        confiance: t.ambigu ? "moyenne" : "élevée",
+        justificationConfiance: t.ambigu
+          ? "Correspondance exacte (compte + tiers + montant au centime) mais plusieurs candidates en N-1 : la pièce d'origine reste à confirmer dans Sage."
+          : "Correspondance exacte (compte + tiers + montant au centime, même sens) entre l'à-nouveau de N et une écriture du brouillard N-1.",
+        lignes: [
+          ...ran
+            .filter((l) => COMPTE_OUVERTURE(l.compte))
+            .slice(0, 4)
+            .map(estLigneSource),
+          ...lignesN1O,
+        ],
+        action:
+          "Aucune correction : l'à-nouveau reporte une opération antérieure tracée dans N-1 (continuité des soldes d'ouverture).",
+      });
+    }
   }
 
   // Tri : les écarts sérieux d'abord (non expliqués / anomalies), puis par

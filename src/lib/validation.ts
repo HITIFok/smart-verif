@@ -62,6 +62,10 @@ export interface PieceVal {
   piece: string;
   date: string;
   net: number;
+  /** Exercice d'origine de l'écriture (N par défaut ; « 2025 » etc. pour
+   *  les écritures N-1 citées en traçabilité). */
+  exercice?: string;
+  fichier?: string;
 }
 
 export interface ResultatEcart {
@@ -76,6 +80,19 @@ export interface ResultatEcart {
   /** Écritures sources utilisées (pièces composant l'écart de l'objet). */
   pieces: PieceVal[];
   nbEcritures: number;
+  /** Ventilation exigée par la mission interexercices : montant expliqué par
+   *  les écritures de N seul (objets calculés sur le brouillard N) et montant
+   *  supplémentaire expliqué par N-1. Les familles restent calculées sur le
+   *  SEUL brouillard N (N-1 ne modifie jamais un montant de validation) : le
+   *  supplément N-1 vaut 0 tant qu'aucun écart de référence n'est porté par
+   *  des écritures N-1 — la structure affiche la ventilation sans jamais
+   *  forcer un chiffre. */
+  montantExpliqueN: number;
+  montantExpliqueN1: number;
+  /** Origine de l'explication : « N » (N seul), « N-1 » (N-1 seul),
+   *  « N+N-1 » (les deux exercices) — les écarts inexpliqués gardent l'origine
+   *  de leur objet ou « aucune ». */
+  origine: "N" | "N-1" | "N+N-1" | "aucune";
   note?: string;
 }
 
@@ -93,6 +110,9 @@ export interface RapportValidation {
     /** Écritures désignées erronées dans les combinaisons de DEUX familles
      *  ou plus (réutilisation conflictuelle — à revue manuelle). */
     nbReutilisationsConflit: number;
+    /** Écarts dont l'explication mobilise le brouillard N-1 (mission
+     *  interexercices : distinguer N seul / N-1 / inexpliqué). */
+    nbExpliquesParN1: number;
     montantTotalReferences: number;
     montantTotalResiduel: number;
   };
@@ -339,6 +359,12 @@ export function construireValidation(
       statut,
       pieces,
       nbEcritures: pieces.length,
+      // Ventilation N / N-1 : les objets de validation sont calculés sur le
+      // brouillard N seul ; le supplément N-1 est affiché à 0 tant qu'aucun
+      // écart de référence n'est porté par des écritures N-1 (jamais forcé).
+      montantExpliqueN: calcule,
+      montantExpliqueN1: 0,
+      origine: objet ? "N" : "aucune",
       ...(note !== undefined ? { note } : {}),
     });
   }
@@ -359,6 +385,7 @@ export function construireValidation(
       nbIncorrects: nb("correspondance_incorrecte"),
       nbEcrituresSources: sources.size,
       nbReutilisationsConflit,
+      nbExpliquesParN1: ecarts.filter((e) => e.origine === "N-1" || e.origine === "N+N-1").length,
       montantTotalReferences:
         Math.round(ecarts.reduce((t, e) => t + e.ecart.montant, 0) * 100) / 100,
       montantTotalResiduel: Math.round(ecarts.reduce((t, e) => t + e.residuel, 0) * 100) / 100,
