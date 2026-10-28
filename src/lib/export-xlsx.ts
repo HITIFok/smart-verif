@@ -372,7 +372,7 @@ export function exportAnomalies(result: AnalysisResult) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rapprochements), "Rapprochement A-B-C");
 
   // Mode de validation : reproduction des écarts de référence de la feuille
-  // « Feuil2 » (lignes Vérification), résiduels au centime.
+  // « 2026 » (lignes Vérification), résiduels au centime.
   if (result.validation) {
     const validation = result.validation.ecarts.map((e) => ({
       Bloc: e.ecart.bloc,
@@ -386,7 +386,7 @@ export function exportAnomalies(result: AnalysisResult) {
       "Écritures sources": e.nbEcritures,
       Note: e.note ?? "",
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(validation), "Validation Feuil2");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(validation), "Validation 2026");
     const totaux = [
       { Indicateur: "Écarts de référence", Valeur: result.validation.totaux.nbReferences },
       { Indicateur: "Expliqués exactement", Valeur: result.validation.totaux.nbExpliquesExact },
@@ -604,8 +604,8 @@ export function exportAnomalies(result: AnalysisResult) {
       "Action recommandée": 70,
     },
   });
-  if (wb.Sheets["Validation Feuil2"]) {
-    mettreEnForme(wb.Sheets["Validation Feuil2"], {
+  if (wb.Sheets["Validation 2026"]) {
+    mettreEnForme(wb.Sheets["Validation 2026"], {
       montants: ["Montant référence", "Écart calculé", "Résiduel"],
       largeurs: {
         Bloc: 24,

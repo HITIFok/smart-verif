@@ -4,7 +4,7 @@
  * Exécution : bun run scripts/validate-2710.ts
  *  1. Lit les deux fichiers réels (upload).
  *  2. Exécute le moteur complet (parseVerif + parseBrouillard + analyse).
- *  3. Compare les écarts de référence (feuille « 2026 » = Feuil2) au calcul.
+ *  3. Compare les écarts de référence (feuille « 2026 » ; Feuil1/Feuil2 masquées sans étiquettes) au calcul.
  *  4. Contrôle croisé avec l'extraction Python indépendante.
  *  5. Écrit le rapport JSON dans download/ + résumé console.
  */
@@ -68,7 +68,7 @@ console.log(`Contrôle croisé TS/Python : ${croise} concordants, ${croiseKo} di
 
 // ---- Rapport de validation
 const v = result.validation!;
-console.log("=== VALIDATION FEUIL2 ===");
+console.log("=== VALIDATION FEUILLE 2026 ===");
 for (const e of v.ecarts) {
   console.log(
     `  L${String(e.ecart.ligne).padStart(3)} ${e.ecart.type === "famille" ? "FAM " : "ENT "} ${e.ecart.bloc.slice(0, 30).padEnd(30)} ref ${e.ecart.montant.toLocaleString("fr-FR").padStart(18)} · calc ${e.montantCalcule.toLocaleString("fr-FR").padStart(18)} · résid ${e.residuel.toLocaleString("fr-FR").padStart(16)} · ${STATUT_VALIDATION_LABELS[e.statut]}`,

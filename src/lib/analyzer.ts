@@ -64,7 +64,8 @@ export interface VerifWorkbook {
   entites: VerifEntity[];
   /** Soldes de la feuille « Balance des comptes » du même classeur, si présente. */
   balance: BalanceRow[] | null;
-  /** Écarts de référence de la feuille annuelle (« Feuil2 » du comptable) :
+  /** Écarts de référence de la feuille annuelle « 2026 » du classeur de
+   *  vérification (les feuilles Feuil1/Feuil2 masquées n'en portent pas) :
    *  lignes Vérification principale (entité) et latérale (famille). */
   ecartsReference: EcartReference[];
 }
@@ -1058,7 +1059,8 @@ export function analyse(
   }
 
   // MODE DE VALIDATION : reproduction des écarts de référence de la feuille
-  // « Feuil2 » du classeur de vérification (lignes Vérification).
+  // « 2026 » du classeur de vérification (lignes Vérification ; audit 28/10 : la
+  // feuille réelle est « 2026 », Feuil1/Feuil2 masquées = extraits de brouillard).
   const validation = ecartsReference.length
     ? construireValidation({ entites, familles, anomalies }, ecartsReference)
     : null;

@@ -550,7 +550,7 @@ console.log("— Règle B 460/462");
 // ====================================================================
 // VALIDATION (mode de validation, mission §8)
 // ====================================================================
-console.log("— Validation Feuil2");
+console.log("— Validation feuille 2026");
 {
   const rows = [
     ["HOLCIM", "DEBIT", "CREDIT", "SOLDE"],

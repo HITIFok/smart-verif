@@ -2,8 +2,13 @@ import type { AnalysisResult } from "./analysis-types";
 import { montantCents } from "./normalisation";
 
 /**
- * MODE DE VALIDATION — reproduction des écarts de la feuille de vérification
- * (« Feuil2 » du comptable, feuille « 2026 » du classeur 27/10).
+ * MODE DE VALIDATION — reproduction des écarts de la feuille de vérification.
+ *
+ * Feuille réelle des contrôles (vérifiée sur données, audit 28/10) : la feuille
+ * VISIBLE « 2026 » du classeur « Verif BG 27102026 VF.xlsx », sélectionnée par
+ * parseVerif via /^\d{4}$/. Les feuilles MASQUÉES Feuil1/Feuil2 du même
+ * classeur sont des extraits de brouillard (RAN, TIERS…) sans aucune étiquette
+ * « Vérification » : elles ne portent pas les 25 contrôles de référence.
  *
  * Chaque ligne « Vérification » de la feuille est un écart de référence :
  *  — principale (étiquette dans les colonnes B-E) : contrôle au niveau ENTITÉ ;

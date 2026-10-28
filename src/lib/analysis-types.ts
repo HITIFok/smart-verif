@@ -262,7 +262,7 @@ export interface AnalysisResult {
    *  et références de lignes du brouillard. */
   rapprochements: ControleRapproche[];
   /** Mode de validation : reproduction des écarts de référence de la feuille
-   *  « Feuil2 » du classeur de vérification. Null si le classeur n'en porte
+   *  « 2026 » du classeur de vérification. Null si le classeur n'en porte
    *  aucun (ancien format). */
   validation: RapportValidation | null;
   /** Brouillard N-1 (exercice précédent) importé : statistiques du fichier

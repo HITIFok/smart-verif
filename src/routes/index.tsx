@@ -280,7 +280,7 @@ function Index() {
               : t === "rapprochement"
                 ? `Rapprochement A/B/C (${result?.rapprochements.filter((c) => c.statut !== "correspondance_trouvee").length ?? 0})`
                 : t === "validation"
-                  ? `Validation Feuil2 (${result?.validation ? `${result.validation.totaux.nbExpliquesExact}/${result.validation.totaux.nbReferences}` : "—"})`
+                  ? `Validation feuille 2026 (${result?.validation ? `${result.validation.totaux.nbExpliquesExact}/${result.validation.totaux.nbReferences}` : "—"})`
                   : t === "ecritures"
                     ? "Écritures à corriger"
                     : t === "transferts"
@@ -1949,7 +1949,7 @@ function Rapprochements({ result }: { result: AnalysisResult }) {
   );
 }
 
-/** Onglet « Validation Feuil2 » — mode de validation (mission §8) : chaque
+/** Onglet « Validation feuille 2026 » — mode de validation (mission §8) : chaque
  *  écart de référence de la feuille de vérification est rapproché du résultat
  *  de l'application, avec résiduel au centime et notes sur les cas documentés
  *  (double comptage du 512600, ajustements manuels de la feuille). */
@@ -1974,7 +1974,7 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
     <section className="mt-6 space-y-4">
       <div className="panel px-4 py-3">
         <p className="text-sm font-semibold">
-          Validation : reproduction des écarts de la feuille de vérification (« Feuil2 »)
+          Validation : reproduction des écarts de la feuille « 2026 » du classeur de vérification
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           Chaque ligne « Vérification » de la feuille annuelle est rapprochée de l'objet calculé par

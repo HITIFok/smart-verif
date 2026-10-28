@@ -620,7 +620,7 @@ console.log("— T13 : n° de lignes Excel d'origine conservés");
 
 // ====================================================================
 // TEST 14 — reproductibilité : deux exécutions identiques, et la
-// validation (Feuil2) STRICTEMENT inchangée par le brouillard N-1
+// validation (feuille « 2026 ») STRICTEMENT inchangée par le brouillard N-1
 // ====================================================================
 console.log("— T14 : reproductibilité et validation inchangée");
 {
