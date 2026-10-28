@@ -12,8 +12,17 @@ import type {
 import { detectTransfers } from "./transfers";
 import { resoudreEcartFamille } from "./ecarts";
 import { BANQUE_PROPRIETAIRE, SHARED_BANK } from "./shared-bank";
+import { BANQUE_PAR_COMPTE, BANQUES_PAR_SOCIETE } from "./banques-societes";
 import { matchPieceSchema } from "./schema-ecritures";
 import { avecLibelle } from "./referentiel";
+import { banquesDuSuffixeFactory, rapprocher, FENETRE_JOURS } from "./rapprochement";
+import { construireValidation, parseEcartsReference, type EcartReference } from "./validation";
+import {
+  normaliseCompte,
+  normaliseDate,
+  normaliseJournal,
+  normaliseReference,
+} from "./normalisation";
 
 const AF = ["460", "461", "462", "467"];
 const TR = ["512", "513"];
@@ -49,6 +58,9 @@ export interface VerifWorkbook {
   entites: VerifEntity[];
   /** Soldes de la feuille « Balance des comptes » du même classeur, si présente. */
   balance: BalanceRow[] | null;
+  /** Écarts de référence de la feuille annuelle (« Feuil2 » du comptable) :
+   *  lignes Vérification principale (entité) et latérale (famille). */
+  ecartsReference: EcartReference[];
 }
 
 const num = (v: unknown): number => {
@@ -125,7 +137,12 @@ export function parseVerif(buffer: ArrayBuffer): VerifWorkbook {
     deduped.push(e);
   }
 
-  return { entites: deduped, balance: parseBalance(wb) };
+  const nCols = rows.reduce((t, r) => Math.max(t, r?.length ?? 0), 0);
+  return {
+    entites: deduped,
+    balance: parseBalance(wb),
+    ecartsReference: parseEcartsReference(rows, nCols),
+  };
 }
 
 /** Reads the "Balance des comptes" sheet (same workbook) if present. */
@@ -149,41 +166,112 @@ export function parseBalance(wb: XLSX.WorkBook): BalanceRow[] | null {
   return out.length ? out : null;
 }
 
-/** Reads the "Brouillard" workbook into normalized entry lines. */
+/**
+ * Lit le « Brouillard » et le normalise. Robuste aux lignes de titre, aux
+ * lignes vides et aux noms de colonnes variables : la ligne d'en-tête est
+ * repérée par son contenu (Code journal + compte général + Débit/Crédit) et
+ * aucune ligne sans compte à 6 chiffres n'est convertie en écriture. Chaque
+ * écriture garde son n° de ligne Excel (1 = en-tête) pour la traçabilité.
+ */
 export function parseBrouillard(buffer: ArrayBuffer): EntryLine[] {
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0] ?? ""]!;
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { raw: true, defval: "" });
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: true,
+    blankrows: true,
+  });
 
-  const pick = (r: Record<string, unknown>, ...keys: string[]) => {
-    for (const k of Object.keys(r)) {
-      const norm = k.toLowerCase().replace(/\s+/g, " ").trim();
-      if (keys.some((x) => norm.includes(x))) return r[k];
+  const num = (v: unknown): number => {
+    if (typeof v === "number" && isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(v.replace(/\s/g, "").replace(",", "."));
+      return isFinite(n) ? n : 0;
     }
-    return "";
+    return 0;
   };
 
-  return rows
-    .map((r): EntryLine => {
-      const rawDate = pick(r, "date");
-      return {
-        journal: str(pick(r, "code journal", "journal")),
-        piece: str(pick(r, "pièce", "piece")).replace(/\.0$/, ""),
-        date:
-          rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : str(rawDate).slice(0, 10),
-        compte: str(pick(r, "compte général", "compte general")).replace(/\.0$/, ""),
-        tiers: str(pick(r, "compte tiers")),
-        libelle: str(pick(r, "libellé", "libelle")),
-        debit: num(pick(r, "débit", "debit")),
-        credit: num(pick(r, "crédit", "credit")),
-        // Code de lettrage Sage (colonne « Lettrage montant ») : preuve que
-        // l'opération est soldée. Absent ("" ) sur les lignes non lettrées
-        // (banques, charges, écritures en cours) — on ne stocke que s'il
-        // existe pour garder les lignes légères.
-        ...(str(pick(r, "lettrage")) ? { lettrage: str(pick(r, "lettrage")) } : {}),
-      };
-    })
-    .filter((l) => l.compte);
+  // Repérage de l'en-tête (au plus 50 premières lignes).
+  interface ColonnesBrouillard {
+    journal?: number;
+    date?: number;
+    piece?: number;
+    facture?: number;
+    reference?: number;
+    compte?: number;
+    tiers?: number;
+    libelle?: number;
+    lettrage?: number;
+    debit?: number;
+    credit?: number;
+  }
+  let headerIdx = -1;
+  let cols: ColonnesBrouillard = {};
+  for (let i = 0; i < Math.min(rows.length, 50); i++) {
+    const r = rows[i] ?? [];
+    const c: ColonnesBrouillard = {};
+    r.forEach((cell, j) => {
+      const n = String(cell ?? "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!n) return;
+      if (n.includes("code journal") || n === "journal") c.journal = j;
+      else if (n === "date") c.date = j;
+      else if (n.includes("pièce") || n.includes("piece")) c.piece = j;
+      else if (n.includes("facture")) c.facture = j;
+      else if (n === "référence" || n === "reference") c.reference = j;
+      else if (n.includes("compte général") || n.includes("compte general")) c.compte = j;
+      else if (n.includes("compte tiers")) c.tiers = j;
+      else if (n.includes("libellé") || n.includes("libelle")) c.libelle = j;
+      else if (n.includes("lettrage")) c.lettrage = j;
+      else if (n === "débit" || n === "debit") c.debit = j;
+      else if (n === "crédit" || n === "credit") c.credit = j;
+    });
+    if (
+      c.journal !== undefined &&
+      c.compte !== undefined &&
+      (c.debit !== undefined || c.credit !== undefined)
+    ) {
+      headerIdx = i;
+      cols = c;
+      break;
+    }
+  }
+  // En-tête introuvable : aucune écriture inventée (une erreur de lecture
+  // ne devient jamais une absence d'écriture — l'appelant affiche 0 ligne).
+  if (headerIdx === -1) return [];
+
+  const cell = (r: unknown[] | undefined, j?: number): unknown =>
+    j === undefined || !r ? "" : (r[j] ?? "");
+
+  const out: EntryLine[] = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const compte = normaliseCompte(cell(r, cols.compte));
+    if (!/^\d{6}$/.test(compte)) continue; // lignes vides, titres, totaux
+    const l: EntryLine = {
+      journal: normaliseJournal(cell(r, cols.journal)),
+      piece: normaliseReference(cell(r, cols.piece)).replace(/\.0$/, ""),
+      date: normaliseDate(cell(r, cols.date)),
+      compte,
+      tiers: String(cell(r, cols.tiers) ?? "")
+        .trim()
+        .replace(/\.0$/, ""),
+      libelle: String(cell(r, cols.libelle) ?? "").trim(),
+      debit: num(cell(r, cols.debit)),
+      credit: num(cell(r, cols.credit)),
+      ligne: i + 1, // n° de ligne Excel (1 = en-tête) — traçabilité
+    };
+    const lettrage = String(cell(r, cols.lettrage) ?? "").trim();
+    if (lettrage && lettrage !== "*") l.lettrage = lettrage;
+    const facture = String(cell(r, cols.facture) ?? "").trim();
+    if (facture && facture !== "*") l.facture = facture.replace(/\.0$/, "");
+    const reference = String(cell(r, cols.reference) ?? "").trim();
+    if (reference && reference !== "*" && reference !== "-") l.reference = reference;
+    out.push(l);
+  }
+  return out;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -233,6 +321,7 @@ export function analyse(
   lignes: EntryLine[],
   verif: VerifEntity[],
   balance?: BalanceRow[] | null,
+  ecartsReference: EcartReference[] = [],
 ): AnalysisResult {
   // Account balances
   const soldes = new Map<string, number>();
@@ -644,17 +733,20 @@ export function analyse(
   // PLUSIEURS décompositions coexistent (variantes alternatives), l'attribution
   // est ambiguë : les pièces citées ne sont que des candidats à rapprocher
   // dans Sage, pas des écritures prouvées erronées.
+  // Lettrage SAGE réel : groupes (compte, tiers, code) équilibrés, puis
+  // statut « soldée Sage » par pièce (une seule fois pour tout le brouillard).
+  // Utilisé par la détection des familles ET par les règles A/B/C du
+  // rapprochement explicable.
+  const equilibresSage = groupesLettrageSage(lignes);
+  const soldeeSagePiece = new Map<string, boolean>();
+  if (equilibresSage.size) {
+    for (const [key, group] of pieces) {
+      if (pieceSoldeeSage(group, equilibresSage)) soldeeSagePiece.set(key, true);
+    }
+  }
+
   const famillesReelles = familles.filter((f) => !f.soldee);
   if (famillesReelles.length) {
-    // Lettrage SAGE réel : groupes (compte, tiers, code) équilibrés, puis
-    // statut « soldée Sage » par pièce (une seule fois pour tout le brouillard).
-    const equilibresSage = groupesLettrageSage(lignes);
-    const soldeeSagePiece = new Map<string, boolean>();
-    if (equilibresSage.size) {
-      for (const [key, group] of pieces) {
-        if (pieceSoldeeSage(group, equilibresSage)) soldeeSagePiece.set(key, true);
-      }
-    }
     const cleAnomalies = new Set(
       anomalies.filter((a) => a.journal || a.piece).map((a) => `${a.journal}|${a.piece}|${a.date}`),
     );
@@ -848,6 +940,47 @@ export function analyse(
 
   const transferts = detectTransfers(lignes, suffixToNom);
 
+  // -------------------------------------------------------------------
+  // RAPPROCHEMENT EXPLICABLE — règles A (411/401/467), B (460/462) et
+  // C (627) : fiches attendu/rapproché/restant avec statuts opposables,
+  // preuves et références de lignes du brouillard (docs/spec-rapprochement.md).
+  // -------------------------------------------------------------------
+  const mciCountsR = new Map<string, number>();
+  for (const l of lignes)
+    if (/^(BOA|BNI).*MCI$/.test(l.journal) && l.compte.startsWith("512"))
+      mciCountsR.set(l.compte, (mciCountsR.get(l.compte) ?? 0) + 1);
+  const mciBankR = [...mciCountsR.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const mciBanksR = new Set<string>(
+    [...(BANQUES_PAR_SOCIETE.get("MCI CARE") ?? []), mciBankR].filter(
+      (b): b is string => b !== null && bankAccounts.has(b),
+    ),
+  );
+  const banqueSocieteR = new Map<string, string>();
+  for (const [compte, f] of BANQUE_PAR_COMPTE)
+    if (bankAccounts.has(compte)) banqueSocieteR.set(compte, f.societe);
+  for (const [compte, owner] of ownerOf)
+    if (!banqueSocieteR.has(compte)) banqueSocieteR.set(compte, owner.nom);
+  const banqueEntiteR = new Map<string, string>();
+  for (const [compte, owner] of ownerOf) banqueEntiteR.set(compte, owner.nom);
+  const rapprochements = rapprocher({
+    lignes,
+    pieces,
+    validAfByBank,
+    banqueSociete: banqueSocieteR,
+    banqueEntite: banqueEntiteR,
+    banquesDuSuffixe: banquesDuSuffixeFactory(bankAccounts, nomDe),
+    mciBanks: mciBanksR,
+    soldeeSage: (key) => soldeeSagePiece.get(key) ?? false,
+    nomDeSuffixe: nomDe,
+    fenetreJours: FENETRE_JOURS,
+  });
+
+  // MODE DE VALIDATION : reproduction des écarts de référence de la feuille
+  // « Feuil2 » du classeur de vérification (lignes Vérification).
+  const validation = ecartsReference.length
+    ? construireValidation({ entites, familles, anomalies }, ecartsReference)
+    : null;
+
   const famillesNonSoldees = familles.filter((f) => !f.soldee);
   const cleCombinaison = (p: { journal?: string; piece?: string; date?: string }) =>
     `${p.journal}|${p.piece}|${p.date}`;
@@ -871,6 +1004,8 @@ export function analyse(
     anomalies,
     transferts,
     ranTiers,
+    rapprochements,
+    validation,
     stats: {
       lignes: lignes.length,
       pieces: pieces.size,

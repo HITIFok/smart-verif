@@ -1,4 +1,6 @@
 import type { TransferProposal } from "./transfers";
+import type { ControleRapproche } from "./rapprochement";
+import type { RapportValidation } from "./validation";
 
 export type AnomalyType = "mauvais_client" | "hors_perimetre" | "compte_oublie" | "ecart_balance";
 
@@ -16,6 +18,14 @@ export interface EntryLine {
    *  forment un groupe de lettrage ; un groupe qui somme à zéro prouve que
    *  l'opération est soldée dans Sage. */
   lettrage?: string;
+  /** N° de facture du brouillard (colonne « N° facture ») — critère de
+   *  rapprochement fort (règles A/B/C). */
+  facture?: string;
+  /** Colonne « Référence » du brouillard. */
+  reference?: string;
+  /** N° de ligne dans le fichier Excel du brouillard (1 = ligne d'en-tête) :
+   *  permet au comptable de retrouver chaque écriture originale. */
+  ligne?: number;
 }
 
 export interface Anomaly {
@@ -220,6 +230,14 @@ export interface AnalysisResult {
   /** À-nouveaux du journal RAN portant sur 401000 / 460 / 411 sans toucher le
    *  périmètre d'aucune famille réelle : les RAN de tiers à considérer. */
   ranTiers: RanTiersPiece[];
+  /** Fiches de rapprochement explicable — règles A (411/401/467), B (460/462)
+   *  et C (627) : attendu / rapproché / restant, statut opposable, preuves
+   *  et références de lignes du brouillard. */
+  rapprochements: ControleRapproche[];
+  /** Mode de validation : reproduction des écarts de référence de la feuille
+   *  « Feuil2 » du classeur de vérification. Null si le classeur n'en porte
+   *  aucun (ancien format). */
+  validation: RapportValidation | null;
   stats: {
     lignes: number;
     pieces: number;

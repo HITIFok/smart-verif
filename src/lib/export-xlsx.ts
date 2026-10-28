@@ -3,6 +3,11 @@ import type { AnalysisResult } from "./analysis-types";
 import { PIECE_ROLE_LABELS } from "./analysis-types";
 import { OPERATION_LABELS } from "./transfers";
 import {
+  STATUT_LABELS as STATUT_RAPPROCHEMENT_R,
+  TYPE_CONTROLE_LABELS as TYPE_CONTROLE_LABELS_R,
+} from "./rapprochement";
+import { STATUT_VALIDATION_LABELS as STATUT_VALIDATION_R } from "./validation";
+import {
   SCHEMA_ECRITURES,
   SCHEMA_ANNULATION_PAIEMENT,
   SCHEMA_FRAIS_BANCAIRES,
@@ -338,6 +343,83 @@ export function exportAnomalies(result: AnalysisResult) {
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(planTiers), "Plan tiers");
 
+  // Rapprochement explicable — règles A/B/C : fiches attendu/rapproché/restant
+  // avec statut opposable, confiance justifiée et références de lignes.
+  const rapprochements = result.rapprochements.map((c) => ({
+    ID: c.id,
+    Contrôle: TYPE_CONTROLE_LABELS_R[c.type],
+    Société: c.societe,
+    Journal: c.journal,
+    "Compte général": c.compteGeneral,
+    "Compte tiers": c.compteTiers,
+    Pièce: c.refPiece,
+    Facture: c.refFacture,
+    Date: c.date,
+    Libellé: c.libelle,
+    "Montant attendu": c.montantAttendu,
+    "Montant rapproché": c.montantRapproche,
+    "Écart restant": c.ecartRestant,
+    Sens: c.sens,
+    Statut: STATUT_RAPPROCHEMENT_R[c.statut],
+    Explication: c.explication,
+    Confiance: c.confiance,
+    "Justification de la confiance": c.justificationConfiance,
+    "Écritures sources": c.lignes
+      .map((l) => `L${l.ligne} ${l.journal} ${l.piece} (${l.compte})`)
+      .join(" ; "),
+    "Action recommandée": c.action,
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rapprochements), "Rapprochement A-B-C");
+
+  // Mode de validation : reproduction des écarts de référence de la feuille
+  // « Feuil2 » (lignes Vérification), résiduels au centime.
+  if (result.validation) {
+    const validation = result.validation.ecarts.map((e) => ({
+      Bloc: e.ecart.bloc,
+      "Ligne feuille": e.ecart.ligne,
+      "Type de contrôle": e.ecart.type === "famille" ? "Famille (latéral)" : "Entité",
+      "Montant référence": e.ecart.montant,
+      "Objet application": e.objet,
+      "Écart calculé": e.montantCalcule,
+      Résiduel: e.residuel,
+      Statut: STATUT_VALIDATION_R[e.statut],
+      "Écritures sources": e.nbEcritures,
+      Note: e.note ?? "",
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(validation), "Validation Feuil2");
+    const totaux = [
+      { Indicateur: "Écarts de référence", Valeur: result.validation.totaux.nbReferences },
+      { Indicateur: "Expliqués exactement", Valeur: result.validation.totaux.nbExpliquesExact },
+      { Indicateur: "Partiellement expliqués", Valeur: result.validation.totaux.nbPartiels },
+      {
+        Indicateur: "Expliqués ailleurs (documenté)",
+        Valeur: result.validation.totaux.nbAilleurs,
+      },
+      { Indicateur: "Non expliqués", Valeur: result.validation.totaux.nbNonExpliques },
+      {
+        Indicateur: "Correspondances incorrectes",
+        Valeur: result.validation.totaux.nbIncorrects,
+      },
+      {
+        Indicateur: "Écritures sources utilisées",
+        Valeur: result.validation.totaux.nbEcrituresSources,
+      },
+      {
+        Indicateur: "Réutilisations conflictuelles",
+        Valeur: result.validation.totaux.nbReutilisationsConflit,
+      },
+      {
+        Indicateur: "Montant total des références",
+        Valeur: result.validation.totaux.montantTotalReferences,
+      },
+      {
+        Indicateur: "Montant total des résiduels",
+        Valeur: result.validation.totaux.montantTotalResiduel,
+      },
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totaux), "Validation totaux");
+  }
+
   // Mise en forme des montants et des largeurs de colonnes (json_to_sheet
   // produit du brut : sans cela, les Ariary s'affichent sans séparateurs).
   mettreEnForme(wb.Sheets["Synthèse clients"], {
@@ -497,6 +579,52 @@ export function exportAnomalies(result: AnalysisResult) {
   mettreEnForme(wb.Sheets["Plan tiers"], {
     largeurs: { "Code tiers": 16, Type: 12, Intitulé: 56 },
   });
+  mettreEnForme(wb.Sheets["Rapprochement A-B-C"], {
+    montants: ["Montant attendu", "Montant rapproché", "Écart restant"],
+    largeurs: {
+      ID: 6,
+      Contrôle: 38,
+      Société: 22,
+      Journal: 10,
+      "Compte général": 13,
+      "Compte tiers": 18,
+      Pièce: 10,
+      Facture: 16,
+      Date: 11,
+      Libellé: 40,
+      "Montant attendu": 16,
+      "Montant rapproché": 16,
+      "Écart restant": 14,
+      Sens: 8,
+      Statut: 26,
+      Explication: 80,
+      Confiance: 10,
+      "Justification de la confiance": 70,
+      "Écritures sources": 50,
+      "Action recommandée": 70,
+    },
+  });
+  if (wb.Sheets["Validation Feuil2"]) {
+    mettreEnForme(wb.Sheets["Validation Feuil2"], {
+      montants: ["Montant référence", "Écart calculé", "Résiduel"],
+      largeurs: {
+        Bloc: 24,
+        "Ligne feuille": 11,
+        "Type de contrôle": 17,
+        "Montant référence": 17,
+        "Objet application": 44,
+        "Écart calculé": 16,
+        Résiduel: 13,
+        Statut: 28,
+        "Écritures sources": 12,
+        Note: 80,
+      },
+    });
+    mettreEnForme(wb.Sheets["Validation totaux"], {
+      montants: ["Valeur"],
+      largeurs: { Indicateur: 34, Valeur: 18 },
+    });
+  }
 
   XLSX.writeFile(wb, `Anomalies_BG_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }

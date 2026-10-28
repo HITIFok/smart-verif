@@ -23,6 +23,9 @@ import type {
 import { PIECE_ROLE_LABELS } from "@/lib/analysis-types";
 import type { TransferProposal } from "@/lib/transfers";
 import { OPERATION_LABELS } from "@/lib/transfers";
+import type { ControleRapproche } from "@/lib/rapprochement";
+import { STATUT_LABELS as STATUT_RAPPROCHEMENT, TYPE_CONTROLE_LABELS } from "@/lib/rapprochement";
+import { STATUT_VALIDATION_LABELS } from "@/lib/validation";
 import {
   CYCLE_CHAIN,
   SCHEMA_ECRITURES,
@@ -80,9 +83,15 @@ function Index() {
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [tab, setTab] = useState<"clients" | "ecritures" | "transferts" | "schema" | "referentiel">(
-    "clients",
-  );
+  const [tab, setTab] = useState<
+    | "clients"
+    | "ecritures"
+    | "transferts"
+    | "rapprochement"
+    | "validation"
+    | "schema"
+    | "referentiel"
+  >("clients");
   const [open, setOpen] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<AnomalyType | "tous">("tous");
   const [filterClient, setFilterClient] = useState<string>("tous");
@@ -222,7 +231,17 @@ function Index() {
       )}
 
       <div className="mt-8 flex gap-1 overflow-x-auto border-b border-border">
-        {(["clients", "ecritures", "transferts", "schema", "referentiel"] as const).map((t) => (
+        {(
+          [
+            "clients",
+            "rapprochement",
+            "validation",
+            "ecritures",
+            "transferts",
+            "schema",
+            "referentiel",
+          ] as const
+        ).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -234,13 +253,17 @@ function Index() {
           >
             {t === "clients"
               ? "Tableau de bord par client"
-              : t === "ecritures"
-                ? "Écritures à corriger"
-                : t === "transferts"
-                  ? `Comptes à comptes (${result?.transferts.filter((x) => x.statut === "a_creer").length ?? 0})`
-                  : t === "schema"
-                    ? "Schéma des écritures"
-                    : "Référentiel comptable"}
+              : t === "rapprochement"
+                ? `Rapprochement A/B/C (${result?.rapprochements.filter((c) => c.statut !== "correspondance_trouvee").length ?? 0})`
+                : t === "validation"
+                  ? `Validation Feuil2 (${result?.validation ? `${result.validation.totaux.nbExpliquesExact}/${result.validation.totaux.nbReferences}` : "—"})`
+                  : t === "ecritures"
+                    ? "Écritures à corriger"
+                    : t === "transferts"
+                      ? `Comptes à comptes (${result?.transferts.filter((x) => x.statut === "a_creer").length ?? 0})`
+                      : t === "schema"
+                        ? "Schéma des écritures"
+                        : "Référentiel comptable"}
           </button>
         ))}
       </div>
@@ -392,6 +415,10 @@ function Index() {
             );
           })}
         </section>
+      ) : tab === "rapprochement" ? (
+        <Rapprochements result={result} />
+      ) : tab === "validation" ? (
+        <ValidationRapport result={result} />
       ) : tab === "transferts" ? (
         <Transferts result={result} />
       ) : (
@@ -1612,5 +1639,371 @@ function CarteFamilleEcart({
         </div>
       )}
     </div>
+  );
+}
+
+const COULEUR_STATUT: Record<string, string> = {
+  anomalie_confirmee: "text-destructive",
+  transfert_absent: "text-destructive",
+  ecart_non_explique: "text-destructive",
+  transfert_partiel: "text-accent-foreground",
+  transfert_excedentaire: "text-accent-foreground",
+  erreur_imputation_probable: "text-accent-foreground",
+  doublon_potentiel: "text-accent-foreground",
+  correspondance_trouvee: "text-success",
+};
+
+/** Onglet « Rapprochement A/B/C » — fiches de contrôle explicables
+ *  (mission §7) : attendu / rapproché / restant, statut opposable,
+ *  explication comptable, confiance justifiée, écritures sources avec
+ *  référence de ligne du brouillard, action recommandée. Filtres : type,
+ *  statut, société, journal, montant minimum. */
+function Rapprochements({ result }: { result: AnalysisResult }) {
+  const [type, setType] = useState<ControleRapproche["type"] | "tous">("tous");
+  const [statut, setStatut] = useState<ControleRapproche["statut"] | "tous">("tous");
+  const [societe, setSociete] = useState("tous");
+  const [journal, setJournal] = useState("tous");
+  const [montantMin, setMontantMin] = useState("0");
+  const [masquerSoldes, setMasquerSoldes] = useState(true);
+  const [ouvert, setOuvert] = useState<string | null>(null);
+  const [limit, setLimit] = useState(60);
+
+  const societes = [...new Set(result.rapprochements.map((c) => c.societe))].sort();
+  const journaux = [...new Set(result.rapprochements.map((c) => c.journal))].filter(Boolean).sort();
+  const min = Number(montantMin.replace(/\s/g, "").replace(",", ".")) || 0;
+
+  const list = result.rapprochements.filter(
+    (c) =>
+      (type === "tous" || c.type === type) &&
+      (statut === "tous" || c.statut === statut) &&
+      (societe === "tous" || c.societe === societe) &&
+      (journal === "tous" || c.journal === journal) &&
+      Math.abs(c.montantAttendu) >= min &&
+      (!masquerSoldes || c.statut !== "correspondance_trouvee"),
+  );
+  const sel =
+    "rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-accent";
+  const parStatut = result.rapprochements.reduce<Record<string, number>>((m, c) => {
+    m[c.statut] = (m[c.statut] ?? 0) + 1;
+    return m;
+  }, {});
+
+  return (
+    <section className="mt-6">
+      <div className="panel mb-4 px-4 py-3">
+        <p className="text-sm font-semibold">Rapprochement explicable — règles A, B et C</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Règle A (411/401/467) : honoraires et paiements à transférer vers MCI CARE · Règle B
+          (460/462) : imputations inter-journaux · Règle C (627) : frais bancaires à la charge de
+          MCI CARE. Chaque fiche montre le montant attendu, rapproché et restant, avec les pièces
+          sources et leur ligne dans le brouillard. Un transfert absent n'est jamais classé anomalie
+          confirmée (des pièces peuvent manquer hors période).
+        </p>
+        <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold uppercase">
+          {Object.entries(parStatut).map(([s, n]) => (
+            <span key={s} className={COULEUR_STATUT[s] ?? "text-muted-foreground"}>
+              {STATUT_RAPPROCHEMENT[s as ControleRapproche["statut"]]} : {n}
+            </span>
+          ))}
+        </p>
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-3">
+        <select value={type} onChange={(e) => setType(e.target.value as never)} className={sel}>
+          <option value="tous">Tous les contrôles</option>
+          {Object.entries(TYPE_CONTROLE_LABELS).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
+        </select>
+        <select value={statut} onChange={(e) => setStatut(e.target.value as never)} className={sel}>
+          <option value="tous">Tous les statuts</option>
+          {Object.entries(STATUT_RAPPROCHEMENT).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
+        </select>
+        <select value={societe} onChange={(e) => setSociete(e.target.value)} className={sel}>
+          <option value="tous">Toutes les sociétés</option>
+          {societes.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <select value={journal} onChange={(e) => setJournal(e.target.value)} className={sel}>
+          <option value="tous">Tous les journaux</option>
+          {journaux.map((j) => (
+            <option key={j} value={j}>
+              {j}
+            </option>
+          ))}
+        </select>
+        <input
+          value={montantMin}
+          onChange={(e) => setMontantMin(e.target.value)}
+          placeholder="Montant min (Ar)"
+          className={`num w-40 ${sel}`}
+        />
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={masquerSoldes}
+            onChange={(e) => setMasquerSoldes(e.target.checked)}
+          />
+          Masquer les contrôles soldés
+        </label>
+      </div>
+
+      <p className="mb-3 text-sm text-muted-foreground">
+        {list.length.toLocaleString("fr-FR")} contrôle(s) — fenêtre de recherche des contreparties :
+        ±{result.rapprochements.find((c) => c.fenetreJours)?.fenetreJours ?? 45} jours.
+      </p>
+
+      <div className="panel divide-y divide-border">
+        {list.slice(0, limit).map((c) => (
+          <div key={c.id} className="px-4 py-3">
+            <button
+              onClick={() => setOuvert(ouvert === c.id ? null : c.id)}
+              className="grid w-full gap-2 text-left md:grid-cols-[1fr_auto]"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">
+                  <span className="num mr-2 text-muted-foreground">{c.id}</span>
+                  {TYPE_CONTROLE_LABELS[c.type]} · {c.societe}
+                  <span className="num ml-2 font-normal text-muted-foreground">
+                    {c.journal && `${c.journal} · `}
+                    {c.refPiece && `pièce ${c.refPiece}`}
+                    {c.date && ` · ${c.date}`}
+                  </span>
+                </p>
+                <p className="truncate text-sm text-muted-foreground">{c.libelle}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {c.compteGeneral}
+                  {c.compteTiers ? ` / ${c.compteTiers}` : ""}
+                  {c.refFacture ? ` · facture ${c.refFacture}` : ""}
+                  {c.sens ? ` · ${c.sens}` : ""}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="num text-sm font-semibold">{fmt(c.ecartRestant)}</p>
+                <p className="num text-[11px] text-muted-foreground">
+                  attendu {fmt(c.montantAttendu)} · rapproché {fmt(c.montantRapproche)}
+                </p>
+                <p
+                  className={`mt-1 text-[11px] font-semibold uppercase ${COULEUR_STATUT[c.statut] ?? ""}`}
+                >
+                  {STATUT_RAPPROCHEMENT[c.statut]}
+                </p>
+              </div>
+            </button>
+            {ouvert === c.id && (
+              <div className="mt-3 space-y-3 rounded-md bg-secondary/40 p-3">
+                <div className="grid gap-2 text-xs sm:grid-cols-2">
+                  <p>
+                    <span className="font-semibold">Explication comptable :</span> {c.explication}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Action recommandée :</span> {c.action}
+                  </p>
+                  <p>
+                    <span className="font-semibold">
+                      Confiance {c.confiance} (niveau qualitatif, pas une probabilité calibrée) :
+                    </span>{" "}
+                    {c.justificationConfiance}
+                  </p>
+                  {c.fenetreJours !== undefined && (
+                    <p>
+                      <span className="font-semibold">Fenêtre de dates :</span> ±{c.fenetreJours}{" "}
+                      jours autour de l'écriture (configurable dans le moteur).
+                    </p>
+                  )}
+                </div>
+                {c.lignes.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="text-muted-foreground">
+                        <tr>
+                          <th className="py-1 pr-2">Ligne</th>
+                          <th className="py-1 pr-2">Journal</th>
+                          <th className="py-1 pr-2">Pièce</th>
+                          <th className="py-1 pr-2">Date</th>
+                          <th className="py-1 pr-2">Compte</th>
+                          <th className="py-1 pr-2">Tiers</th>
+                          <th className="py-1 pr-2">Libellé</th>
+                          <th className="py-1 pr-2 text-right">Débit</th>
+                          <th className="py-1 text-right">Crédit</th>
+                        </tr>
+                      </thead>
+                      <tbody className="num divide-y divide-border/60">
+                        {c.lignes.map((l, i) => (
+                          <tr key={`${c.id}-${i}`}>
+                            <td className="py-1 pr-2 font-semibold">{l.ligne}</td>
+                            <td className="py-1 pr-2">{l.journal}</td>
+                            <td className="py-1 pr-2">{l.piece}</td>
+                            <td className="py-1 pr-2">{l.date}</td>
+                            <td className="py-1 pr-2">{l.compte}</td>
+                            <td className="py-1 pr-2">{l.tiers}</td>
+                            <td className="max-w-[16rem] truncate py-1 pr-2" title={l.libelle}>
+                              {l.libelle}
+                            </td>
+                            <td className="py-1 pr-2 text-right">{l.debit ? fmt(l.debit) : ""}</td>
+                            <td className="py-1 text-right">{l.credit ? fmt(l.credit) : ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      « Ligne » = n° de ligne du fichier Excel du brouillard (1 = en-tête) pour
+                      retrouver l'écriture originale.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        {list.length === 0 && (
+          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+            Aucun contrôle ne correspond aux filtres.
+          </p>
+        )}
+        {list.length > limit && (
+          <button
+            onClick={() => setLimit((l) => l + 100)}
+            className="w-full rounded-md border border-border bg-card py-2.5 text-sm font-semibold hover:border-accent"
+          >
+            Afficher plus ({list.length - limit} restants)
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Onglet « Validation Feuil2 » — mode de validation (mission §8) : chaque
+ *  écart de référence de la feuille de vérification est rapproché du résultat
+ *  de l'application, avec résiduel au centime et notes sur les cas documentés
+ *  (double comptage du 512600, ajustements manuels de la feuille). */
+function ValidationRapport({ result }: { result: AnalysisResult }) {
+  const [ouvert, setOuvert] = useState<string | null>(null);
+  const v = result.validation;
+  if (!v)
+    return (
+      <p className="panel mt-6 px-4 py-10 text-center text-sm text-muted-foreground">
+        Aucune ligne « Vérification » n'a été trouvée dans la feuille annuelle du classeur de
+        vérification : le mode de validation n'a rien à rapprocher.
+      </p>
+    );
+  const t = v.totaux;
+  const cellule = (label: string, valeur: string | number, tone?: string) => (
+    <div key={label} className="rounded-md border border-border bg-card px-3 py-2">
+      <p className={`num text-lg font-bold ${tone ?? ""}`}>{valeur}</p>
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+    </div>
+  );
+  return (
+    <section className="mt-6 space-y-4">
+      <div className="panel px-4 py-3">
+        <p className="text-sm font-semibold">
+          Validation : reproduction des écarts de la feuille de vérification (« Feuil2 »)
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Chaque ligne « Vérification » de la feuille annuelle est rapprochée de l'objet calculé par
+          l'application (entité ou famille). Résiduel = référence − calculé, au centime. Les cas
+          particuliers documentés (banque 512600 listée à la fois dans ORANGE MONEY MADAGASCAR et
+          dans la famille EVIOSYS, ajustements manuels de la feuille) sont expliqués en note plutôt
+          que présentés comme des échecs.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {cellule("Écarts de référence", t.nbReferences)}
+        {cellule("Expliqués exactement", t.nbExpliquesExact, "text-success")}
+        {cellule("Partiellement expliqués", t.nbPartiels, "text-accent-foreground")}
+        {cellule("Expliqués ailleurs (documenté)", t.nbAilleurs, "text-accent-foreground")}
+        {cellule("Non expliqués", t.nbNonExpliques, "text-destructive")}
+        {cellule("Correspondances incorrectes", t.nbIncorrects, "text-destructive")}
+        {cellule("Écritures sources utilisées", t.nbEcrituresSources)}
+        {cellule(
+          "Réutilisations conflictuelles",
+          t.nbReutilisationsConflit,
+          t.nbReutilisationsConflit ? "text-destructive" : "text-success",
+        )}
+        {cellule("Montant total des références (Ar)", fmt(t.montantTotalReferences))}
+      </div>
+      <div className="panel divide-y divide-border">
+        {v.ecarts.map((e) => {
+          const key = `${e.ecart.bloc}-L${e.ecart.ligne}`;
+          return (
+            <div key={key} className="px-4 py-3">
+              <button
+                onClick={() => setOuvert(ouvert === key ? null : key)}
+                className="grid w-full gap-2 text-left md:grid-cols-[1fr_auto_auto]"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {e.ecart.bloc}
+                    <span
+                      className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground ${e.ecart.type === "famille" ? "bg-secondary" : "bg-accent/10"}`}
+                    >
+                      {e.ecart.type === "famille"
+                        ? "contrôle famille (latéral)"
+                        : "contrôle entité"}
+                    </span>
+                    <span className="num ml-2 font-normal text-muted-foreground">
+                      feuille L{e.ecart.ligne}
+                    </span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {e.objet || "Aucun objet correspondant"}
+                  </p>
+                  {e.note && <p className="mt-1 text-xs text-accent-foreground">{e.note}</p>}
+                </div>
+                <div className="text-right">
+                  <p className="num text-sm font-semibold">{fmt(e.ecart.montant)}</p>
+                  <p className="num text-[11px] text-muted-foreground">
+                    calculé {fmt(e.montantCalcule)} · résiduel {fmt(e.residuel)}
+                  </p>
+                </div>
+                <p
+                  className={`self-center text-[11px] font-semibold uppercase ${
+                    e.statut === "explique_exact"
+                      ? "text-success"
+                      : e.statut === "non_explique" || e.statut === "correspondance_incorrecte"
+                        ? "text-destructive"
+                        : "text-accent-foreground"
+                  }`}
+                >
+                  {STATUT_VALIDATION_LABELS[e.statut]}
+                </p>
+              </button>
+              {ouvert === key && e.pieces.length > 0 && (
+                <div className="mt-2 rounded-md bg-secondary/40 p-2">
+                  <p className="mb-1 text-xs font-semibold">
+                    Écritures sources utilisées ({e.nbEcritures}) — triées par |net| décroissant :
+                  </p>
+                  <div className="num max-h-56 space-y-0.5 overflow-y-auto text-xs">
+                    {e.pieces.slice(0, 40).map((p, i) => (
+                      <p key={`${key}-${i}`}>
+                        {p.journal} · pièce {p.piece} · {p.date} ·{" "}
+                        <span className={p.net < 0 ? "text-destructive" : ""}>{fmt(p.net)}</span>
+                      </p>
+                    ))}
+                    {e.pieces.length > 40 && (
+                      <p className="text-muted-foreground">
+                        … et {e.pieces.length - 40} autres (voir l'onglet Tableau de bord par
+                        client).
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
