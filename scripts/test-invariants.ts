@@ -151,6 +151,32 @@ const resNN1 = analyse(lignesN, entites, balance, ecartsReference, lignesN1);
   );
 }
 
+// — Invariant 11 (révision du 29/10/2026) : la décomposition affichée de
+//   chaque résiduel reconstitue ce résiduel au centime — somme des
+//   contributions des divergences de source + écart restant = résiduel.
+//   Verrouille la correction du signe de la décomposition BOOST (L354).
+{
+  const diags = construireDiagnostics(resN);
+  const reconstitues = diags.every(
+    (d) =>
+      Math.abs(
+        d.composants.reduce((s, c) => s + c.contribution, 0) + d.ecartRestant - d.ecartSigne,
+      ) < 0.01,
+  );
+  verifie(
+    reconstitues && diags.length === 8,
+    "INV11 : Σ contributions des divergences + écart restant = résiduel, au centime, pour chacun des 8 diagnostics",
+  );
+  const b354 = diags.find((d) => d.ligne === 354);
+  const somme354 = b354
+    ? Math.round((b354.composants.reduce((s, c) => s + c.contribution, 0) + b354.ecartRestant) * 100) / 100
+    : 0;
+  verifie(
+    !!b354 && Math.abs(somme354 - b354.ecartSigne) < 0.01 && b354.composants.length === 1,
+    `INV11 : L354 — divergence de source 512320 (${b354?.composants[0]?.contribution.toLocaleString("fr-FR")} Ar) + ajustement de référence (${b354?.ecartRestant.toLocaleString("fr-FR")} Ar) = résiduel (${b354?.ecartSigne.toLocaleString("fr-FR")} Ar)`,
+  );
+}
+
 // ------------------------------------------------------------------
 // INVARIANTS 4 à 8 — fixtures minimales
 // ------------------------------------------------------------------

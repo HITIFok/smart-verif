@@ -233,12 +233,32 @@ export function construireDiagnostics(result: AnalysisResult): DiagnosticEcart[]
       // Ex. L471/L482 : 512600 attribué à la famille EVIOSYS — le solde est
       // couvert par un autre contrôle ; le propriétaire reste à confirmer
       // par écrit (mission : statut incertain tant que non confirmé).
+      // Révision du 29/10/2026 : le constat distingue explicitement le
+      // MONTANT DE RÉFÉRENCE (feuille), le MONTANT CALCULÉ (moteur) et le
+      // SOLDE du compte en conflit. Le résiduel = référence − calculé ; il
+      // ne coïncide avec le solde du compte que si l'égalité se vérifie
+      // réellement au centime (vrai pour L482, faux pour L471 qui agrège
+      // d'autres postes de la feuille).
       type = "ACCOUNT_OWNERSHIP_CONFLICT";
       confiance = "probable";
       libelle = `Conflit potentiel d'affectation du compte ${conflit} — propriétaire à confirmer`;
-      const soldeCompte = Math.abs(ecart.residuel);
+      const soldeBrouillardConflit = Math.abs(
+        result.entites.flatMap((e) => e.comptes).find((c) => c.compte === conflit)?.solde ?? 0,
+      );
       elementsConfirmes.push(
-        `Le résiduel (${ecart.residuel.toLocaleString("fr-FR")} Ar) correspond au centime au solde du compte ${conflit} tel que calculé par l'application sur le brouillard.`,
+        `Montant calculé par l'application pour ce contrôle : ${ecart.montantCalcule.toLocaleString("fr-FR")} Ar — le résiduel (${ecart.residuel.toLocaleString("fr-FR")} Ar) s'identifie donc au montant de référence de la feuille, et non à un calcul du moteur.`,
+      );
+      if (cts(soldeBrouillardConflit) === cts(ecart.residuel)) {
+        elementsConfirmes.push(
+          `Le montant de référence correspond au centime au solde du compte ${conflit} calculé sur le brouillard (${soldeBrouillardConflit.toLocaleString("fr-FR")} Ar) ; aucune divergence de source n'est détectée par le moteur sur ce compte (solde brouillard = solde balance).`,
+        );
+      } else {
+        const supplement = Math.round((ecart.residuel - soldeBrouillardConflit) * 100) / 100;
+        elementsConfirmes.push(
+          `Le montant de référence (${ecart.residuel.toLocaleString("fr-FR")} Ar) ne se réduit PAS au solde du compte ${conflit} (${soldeBrouillardConflit.toLocaleString("fr-FR")} Ar) : il agrège plusieurs postes de la feuille (autres trésoreries et appels de fonds). Le supplément de ${supplement.toLocaleString("fr-FR")} Ar correspond à d'autres comptes du même bloc de la feuille — le résiduel ne peut pas être rattaché au seul solde du compte en conflit (décomposition de la feuille à faire valoir, voir hypothèses d'audit).`,
+        );
+      }
+      elementsConfirmes.push(
         "Le compte est revendiqué par ce contrôle de la feuille ET utilisé par un autre objet de l'application (double comptage de la feuille documenté dans la note de validation).",
       );
       elementsManquants.push(
@@ -267,8 +287,15 @@ export function construireDiagnostics(result: AnalysisResult): DiagnosticEcart[]
           ? "Ajustement manuel de référence sans justificatif retrouvé (hypothèse)"
           : "Résiduel partiellement rattaché — preuves insuffisantes pour conclure";
       for (const c of composants) elementsConfirmes.push(c.explication);
+      // Révision du 29/10/2026 : la part du résiduel rattachée aux
+      // divergences de source est la SOMME des contributions des composants
+      // (résiduel − écart restant). L'ancienne formule (−résiduel + restant)
+      // imprimait son opposé, d'où une décomposition qui ne reconstituait
+      // pas le résiduel. Les montants sont affichés avec signe explicite.
+      const sommeContributions = Math.round((ecart.residuel - restant) * 100) / 100;
+      const signe = (n: number) => `${n > 0 ? "+" : ""}${n.toLocaleString("fr-FR")}`;
       elementsConfirmes.push(
-        `Part du résiduel rattachée à des divergences de source : ${(-ecart.residuel + restant).toLocaleString("fr-FR")} Ar ; écart restant non dérivable du brouillard : ${restant.toLocaleString("fr-FR")} Ar.`,
+        `Décomposition du résiduel : ${signe(sommeContributions)} Ar rattachés aux divergences de source (somme des contributions ci-dessus, au sens balance − brouillard) ${signe(restant)} Ar d'écart restant non dérivable du brouillard (hypothèse : ajustement manuel de référence) = ${signe(ecart.residuel)} Ar de résiduel.`,
       );
       if (type === "REFERENCE_ADJUSTMENT") {
         preuvesAudit.push({
@@ -365,6 +392,22 @@ export function construireDiagnostics(result: AnalysisResult): DiagnosticEcart[]
           "Le compte 512600 (« BOA EVIOSYS » dans la balance) paie les factures CAMUSAT/SONOCO du périmètre EVIOSYS dans le brouillard, mais il est listé dans le contrôle ORANGE MONEY MADAGASCAR de la feuille. L'application l'attribue à la famille EVIOSYS (propriétaire unique) et le contrôle latéral EVIOSYS L544 est exact avec ce périmètre.",
       });
       demandes.push("Confirmation comptable écrite du propriétaire du compte 512600.");
+      // Révision du 29/10/2026 — décomposition de la feuille documentée par
+      // l'audit, affichée uniquement quand la condition numérique se vérifie
+      // au centime dans les données importées (résiduel = solde 512600 +
+      // supplément de 7 671 903,02 Ar).
+      const solde600 =
+        result.entites.flatMap((e) => e.comptes).find((c) => c.compte === "512600")?.solde ?? 0;
+      if (
+        bloc === "ORANGE MADAGASCAR" &&
+        Math.abs(ecart.residuel - (solde600 + 7671903.02)) < 0.01
+      ) {
+        preuvesAudit.push({
+          source: "Formules de la feuille « 2026 » (audit du 28/10/2026, révisé le 29/10)",
+          detail:
+            "Le contrôle latéral H471 = H469 + H470 agrège QUATRE postes de la feuille : appel de fonds 467500 (E463 = −194 400,00 Ar), trésoreries 512500 + 512004 + 513500 (E467 = 7 866 303,02 Ar), appel de fonds du bloc ORANGE MONEY (E478 = 0,00 Ar) et trésorerie 512600 (E480 = 62 098 371,47 Ar). Seul E480 correspond au compte 512600 : le résiduel L471 (69 770 274,49 Ar) ne peut pas être rattaché au seul solde de ce compte ; le supplément de 7 671 903,02 Ar provient des trois autres trésoreries et de l'appel de fonds du bloc.",
+        });
+      }
     }
     if (ecart.ecart.ligne === 571 && typesSecondaires.includes("DUPLICATE_POTENTIAL")) {
       demandes.push("Relevé bancaire du 2026-01-02 (journal BNIALL) pour arbitrer le double paiement potentiel de 23 400 Ar.");
@@ -400,8 +443,97 @@ export function construireDiagnostics(result: AnalysisResult): DiagnosticEcart[]
   return diagnostics;
 }
 
+/** Révision du 29/10/2026 — identifiant(s) de DOCUMENT(S) demandé(s) dans un
+ *  libellé de pièce. Sert à dédupliquer les demandes qui portent sur le même
+ *  document (un même grand livre, une même confirmation) même quand elles
+ *  sont émises par des contrôles différents : une seule demande est conservée
+ *  et toutes les références (contrôles/objets) sont regroupées sur elle. Les
+ *  pièces réellement différentes restent des demandes séparées. */
+function documentsDeLaPiece(piece: string): string[] {
+  const norm = piece.toLowerCase().replace(/\s+/g, " ").trim();
+  const docs: string[] = [];
+  // Grands livres : comptes extraits de la seule clause « grand livre… »
+  // (coupe avant « et relevé… » pour ne pas prendre un compte bancaire du
+  // relevé pour un compte de grand livre).
+  if (norm.includes("grand livre")) {
+    const clause =
+      /grand livre sage (?:du compte|des comptes)(.*?)(?=\s+et relevé| sur la|\(|\.|$)/.exec(norm)?.[1] ?? "";
+    const comptes = [...new Set(clause.match(/\b[45]\d{5}\b/g) ?? [])].sort();
+    for (const c of comptes) docs.push(`GL:${c}`);
+  }
+  if (norm.includes("relevé bancaire")) {
+    docs.push(`REV:${(/relevé bancaire[^.,;]*/.exec(norm)?.[0] ?? norm).slice(0, 48)}`);
+  }
+  if (norm.includes("confirmation comptable")) {
+    docs.push(`CONF:${/\b[45]\d{5}\b/.exec(norm)?.[0] ?? "?"}`);
+  }
+  if (norm.includes("justificatif de l'ajustement")) {
+    docs.push(`JUSTIF:${(/justificatif de l'ajustement[^.;]*/.exec(norm)?.[0] ?? norm).slice(0, 64)}`);
+  }
+  return docs.length ? docs : [norm.slice(0, 80)];
+}
+
+/** Fusion des demandes portant sur les mêmes documents : une demande A est
+ *  absorbée par une demande B dès que les documents de A sont inclus dans
+ *  ceux de B (à ensemble égal, la première demande fait foi). Les références
+ *  des deux objets sont conservées sur la demande fusionnée — aucun contrôle
+ *  ne perd sa demande de pièce. Retourne la liste dédupliquée et le nombre
+ *  de doublons véritables supprimés. */
+function dedupDemandesPieces(demandes: DemandePiece[]): { liste: DemandePiece[]; doublonsSupprimes: number } {
+  const recs = demandes.map((d) => ({ d, docs: new Set(documentsDeLaPiece(d.piece)) }));
+  // Regroupement glouton : les demandes les plus larges d'abord (à taille
+  // égale, la plus ancienne d'abord) créent ou rejoignent un groupe dont
+  // l'ensemble de documents contient intégralement le leur. Toute demande
+  // incluse dans un groupe existant y est fusionnée — pas de cycle possible.
+  const ordre = recs.map((_, i) => i).sort((a, b) => recs[b].docs.size - recs[a].docs.size || a - b);
+  const groupes: { docs: Set<string>; membres: number[]; createur: number }[] = [];
+  for (const i of ordre) {
+    const docsI = recs[i].docs;
+    let g = groupes.find((G) => [...docsI].every((x) => G.docs.has(x)));
+    if (!g) {
+      g = { docs: new Set(docsI), membres: [], createur: i };
+      groupes.push(g);
+    }
+    g.membres.push(i);
+  }
+  // Sortie dans l'ordre de première apparition ; le libellé retenu pour une
+  // demande fusionnée est celui du créateur (le libellé le plus large, qui
+  // mentionne tous les documents du groupe).
+  const liste: DemandePiece[] = [];
+  let doublonsSupprimes = 0;
+  const groupesTriees = [...groupes].sort(
+    (a, b) => Math.min(...a.membres) - Math.min(...b.membres),
+  );
+  for (const g of groupesTriees) {
+    const membres = [...g.membres].sort((a, b) => a - b); // ordre d'apparition
+    if (membres.length > 1) doublonsSupprimes += membres.length - 1;
+    const hoteRec = recs[g.createur].d; // libellé le plus large du groupe
+    if (membres.length === 1) {
+      liste.push(hoteRec);
+      continue;
+    }
+    const controles = [...new Set(membres.map((k) => recs[k].d.controle))];
+    const motifs = [...new Set(membres.map((k) => recs[k].d.motif))];
+    const types = [...new Set(membres.map((k) => recs[k].d.type))];
+    liste.push({
+      controle: controles.join(" / "),
+      ligne: Math.min(...membres.map((k) => recs[k].d.ligne)),
+      type: types.length > 1 ? (types.join(" / ") as DemandePiece["type"]) : hoteRec.type,
+      piece: hoteRec.piece,
+      motif:
+        motifs.length > 1
+          ? `${motifs[0]} — pièce commune à plusieurs objets (la même pièce avait été demandée par chacun avant déduplication) ; motifs complémentaires : ${motifs.slice(1).join(" ; ")}.`
+          : hoteRec.motif,
+    });
+  }
+  return { liste, doublonsSupprimes };
+}
+
 /** Mission §9 — liste des pièces comptables à demander, dérivée des
- *  diagnostics (aucune réponse inventée à la place du comptable). */
+ *  diagnostics (aucune réponse inventée à la place du comptable). La liste
+ *  est dédupliquée au niveau DOCUMENT : un même document (grand livre d'un
+ *  compte, confirmation écrite…) demandé par plusieurs contrôles n'apparaît
+ *  qu'une fois, avec toutes ses références regroupées. */
 export function construireDemandesPieces(diagnostics: DiagnosticEcart[], result: AnalysisResult): DemandePiece[] {
   const demandes: DemandePiece[] = [];
   for (const d of diagnostics) {
@@ -461,5 +593,8 @@ export function construireDemandesPieces(diagnostics: DiagnosticEcart[], result:
       });
     }
   }
-  return demandes;
+  // Révision du 29/10/2026 : déduplication au niveau document (un même
+  // document demandé par plusieurs contrôles = une seule demande, références
+  // regroupées). Aucune pièce différente n'est fusionnée ni supprimée.
+  return dedupDemandesPieces(demandes).liste;
 }

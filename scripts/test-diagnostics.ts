@@ -24,6 +24,9 @@ const verifie = (cond: boolean, nom: string) => {
   }
 };
 const parLigne = (ds: DiagnosticEcart[], ligne: number) => ds.find((d) => d.ligne === ligne);
+// toLocaleString("fr-FR") insère des espaces fines/insécables comme
+// séparateurs de milliers : normalisation pour les comparaisons littérales.
+const espace = (s: string) => s.replace(/[\u202F\u00A0\u2009]/g, " ");
 
 const verifBuf = await Bun.file(`${UP}/Verif BG 27102026 VF.xlsx`).arrayBuffer();
 const { entites, balance, ecartsReference } = parseVerif(verifBuf);
@@ -98,6 +101,17 @@ verifie(diagnostics.length === 8, `exactement 8 diagnostics (reçu : ${diagnosti
     verifie(Math.abs(b.ecartRestant - 7442352) < 0.01, `L354 : écart restant = ajustement manuel 7 442 352,00 (reçu : ${b.ecartRestant})`);
     verifie(b.preuvesAudit.some((p) => p.detail.includes("5 936 056,32")), "L354 : montant non tracé 5 936 056,32 présenté séparément");
     verifie(b.elementsConfirmes.some((x) => x.includes("L358")), "L354 : cause commune avec L358 documentée");
+    // Révision 29/10/2026 : la décomposition affichée reconstitue le résiduel
+    // au centime, avec le signe correct (+143 772 au sens balance − brouillard).
+    const dec = b.elementsConfirmes.find((x) => x.includes("Décomposition du résiduel"));
+    verifie(
+      !!dec && espace(dec).includes("+143 772") && espace(dec).includes("+7 442 352") && espace(dec).includes("+7 586 124"),
+      `L354 : décomposition affichée +143 772 + 7 442 352 = +7 586 124 (reçu : ${dec ?? "absente"})`,
+    );
+    verifie(
+      !b.elementsConfirmes.some((x) => x.includes("-143 772") || x.includes("−143 772")),
+      "L354 : plus aucune part de résiduel affichée en négatif (−143 772) — signe corrigé",
+    );
   }
   if (j) {
     verifie(j.type === "REFERENCE_ADJUSTMENT", `L358 : type REFERENCE_ADJUSTMENT (reçu : ${j.type})`);
@@ -113,6 +127,42 @@ verifie(diagnostics.length === 8, `exactement 8 diagnostics (reçu : ${diagnosti
   if (a) {
     verifie(a.compte === "512600", "L471 : compte en conflit = 512600");
     verifie(a.actionRecommandee.includes("par écrit"), "L471 : confirmation écrite exigée (pas d'attribution arbitraire)");
+    // Révision 29/10/2026 : le résiduel L471 ne se réduit PAS au solde du
+    // seul compte 512600 (il agrège quatre postes de la feuille) ; le calcul
+    // de l'application est 0 — le résiduel s'identifie à la référence.
+    verifie(
+      a.elementsConfirmes.some(
+        (x) =>
+          espace(x).includes("ne se réduit PAS") &&
+          espace(x).includes("62 098 371,47") &&
+          espace(x).includes("7 671 903,02"),
+      ),
+      "L471 : résiduel 69 770 274,49 non réduit au solde 512600 (62 098 371,47) — supplément 7 671 903,02 documenté",
+    );
+    verifie(
+      a.elementsConfirmes.some((x) => x.includes("Montant calculé par l'application")),
+      "L471 : montant calculé (0) distingué du montant de référence",
+    );
+    verifie(
+      a.preuvesAudit.some((p) => p.detail.includes("H471") && p.detail.includes("E480")),
+      "L471 : décomposition H471 = E463 + E467 + E478 + E480 documentée comme hypothèse d'audit",
+    );
+    verifie(
+      !a.elementsConfirmes.some((x) => x.includes("correspond au centime au solde du compte 512600")),
+      "L471 : l'ancienne affirmation (résiduel = solde 512600) a disparu",
+    );
+  }
+  if (b) {
+    verifie(
+      b.elementsConfirmes.some(
+        (x) => espace(x).includes("solde du compte 512600") && espace(x).includes("62 098 371,47"),
+      ),
+      "L482 : résiduel = référence E482 = solde 512600 (62 098 371,47) — égalité vérifiée au centime",
+    );
+    verifie(
+      b.elementsConfirmes.some((x) => x.includes("Montant calculé par l'application")),
+      "L482 : montant calculé (0) distingué du montant de référence",
+    );
   }
 }
 // Mission §4 invariant 9 : aucun contrôle historique supprimé du rapport.
@@ -140,6 +190,38 @@ verifie(motifs.some((m) => m.includes("5 936 056,32")), "demande : justificatif 
 verifie(
   !demandes.some((x) => /écriture (corrective|automatique)|passer l'écriture|suggestion d'écriture/i.test(x.motif)),
   "aucune écriture corrective Sage proposée (mission : interdit)",
+);
+// Révision 29/10/2026 : déduplication au niveau document — 31 demandes
+// brutes, 9 doublons véritables supprimés, 22 demandes, toutes références
+// conservées ; les pièces différentes restent séparées.
+verifie(demandes.length === 22, `demandes dédupliquées : 22 (31 brutes − 9 doublons véritables) — reçu : ${demandes.length}`);
+verifie(
+  new Set(demandes.map((x) => x.piece)).size === demandes.length,
+  "aucune pièce textuellement identique demandée deux fois",
+);
+verifie(
+  demandes.some((x) => x.controle.includes("L471") && x.controle.includes("L482") && x.piece.includes("512600")),
+  "demande fusionnée : confirmation 512600 référencée pour L471 ET L482",
+);
+verifie(
+  demandes.some(
+    (x) => x.piece.includes("512320") && x.piece.includes("512005") && x.controle.includes("L358"),
+  ),
+  "demande fusionnée : grand livre 512320 + 512005 référencé pour L354 et L358",
+);
+verifie(
+  demandes.filter((x) => /grand livre/i.test(x.piece) && x.piece.includes("467910")).length === 1,
+  "un seul grand livre 467910 demandé (doublon TALOUMIS supprimé)",
+);
+verifie(
+  ["512140", "512320", "512005", "512900", "467910", "467102", "467501", "467103", "512000", "467100", "460110", "512110", "512100", "467280", "512220", "513110", "513000"].every(
+    (c) => demandes.filter((x) => /grand livre/i.test(x.piece) && x.piece.includes(c)).length === 1,
+  ),
+  "chaque grand livre de compte n'est demandé qu'une seule fois (17 comptes)",
+);
+verifie(
+  demandes.filter((x) => x.piece.includes("Justificatif de l'ajustement")).length === 2,
+  "les deux justificatifs distincts restent séparés (composante 5 936 056,32 ≠ ajustement total 7 442 352)",
 );
 
 // Sérialisation pour le rapport final
