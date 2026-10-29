@@ -1,9 +1,15 @@
 /**
- * Révision du 29/10/2026 — preuve d'export : régénère l'export Excel complet
- * de l'application (mêmes fonctions que le bouton « Export » de l'interface)
- * sur les fichiers d'audit réels et vérifie la feuille « Pièces à demander »
- * (22 lignes attendues après déduplication au niveau document) ainsi que la
- * feuille « Diagnostics 8 écarts » (constats corrigés L354/L471/L482).
+ * Livrable d'export DE DONNÉES (révision du 29/10/2026) — extrait à deux
+ * feuilles (Pièces à demander + Diagnostics 8 écarts) régénéré depuis les
+ * mêmes données et les mêmes fonctions de construction
+ * (construireDiagnostics + construireDemandesPieces) que l'application.
+ *
+ * ⚠ Portée exacte — ce script N'APPELLE PAS la fonction `exportAnomalies`
+ * du bouton « Export » de l'interface (src/lib/export-xlsx.ts) : il
+ * reconstruit ses deux feuilles avec son propre mapping. La validation du
+ * bouton Export lui-même est faite par scripts/test-export-anomalies.ts,
+ * qui appelle `exportAnomalies()` directement et relit le classeur produit.
+ *
  * Exécution : bun run scripts/export-xlsx-verification.ts
  */
 import { analyse, parseBrouillard, parseVerif } from "../src/lib/analyzer";

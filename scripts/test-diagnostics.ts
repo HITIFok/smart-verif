@@ -88,50 +88,57 @@ verifie(diagnostics.length === 8, `exactement 8 diagnostics (reçu : ${diagnosti
     verifie(d.typesSecondaires.includes("DUPLICATE_POTENTIAL"), "L571 : doublon potentiel (pièces 63/3540) en type secondaire distinct");
   }
 }
-// L354 BOOST / L358 JBU — cause commune
+// L354 BOOST / L358 JBU — cause commune.
+// Revue finale 29/10 : variables nommées d'après le diagnostic ciblé
+// (boost = diagnostic L354, jbu = diagnostic L358) — aucune assertion
+// L354 ne peut plus porter par mégarde sur L358 ni inversement.
 {
-  const b = parLigne(diagnostics, 354);
-  const j = parLigne(diagnostics, 358);
-  verifie(!!b, "L354 : diagnostic présent");
-  verifie(!!j, "L358 : diagnostic présent");
-  if (b) {
-    verifie(b.type === "REFERENCE_ADJUSTMENT", `L354 : type REFERENCE_ADJUSTMENT (reçu : ${b.type})`);
-    verifie(b.composants.some((c) => c.compte === "512320"), "L354 : composant 512320 (virements croisés absents)");
-    verifie(Math.abs(b.composants.find((c) => c.compte === "512320")?.contribution - 143772) < 0.01, "L354 : contribution 512320 = +143 772,00");
-    verifie(Math.abs(b.ecartRestant - 7442352) < 0.01, `L354 : écart restant = ajustement manuel 7 442 352,00 (reçu : ${b.ecartRestant})`);
-    verifie(b.preuvesAudit.some((p) => p.detail.includes("5 936 056,32")), "L354 : montant non tracé 5 936 056,32 présenté séparément");
-    verifie(b.elementsConfirmes.some((x) => x.includes("L358")), "L354 : cause commune avec L358 documentée");
+  const boost = parLigne(diagnostics, 354);
+  const jbu = parLigne(diagnostics, 358);
+  verifie(!!boost, "L354 : diagnostic présent");
+  verifie(!!jbu, "L358 : diagnostic présent");
+  if (boost) {
+    verifie(boost.type === "REFERENCE_ADJUSTMENT", `L354 : type REFERENCE_ADJUSTMENT (reçu : ${boost.type})`);
+    verifie(boost.composants.some((c) => c.compte === "512320"), "L354 : composant 512320 (virements croisés absents)");
+    verifie(Math.abs(boost.composants.find((c) => c.compte === "512320")?.contribution - 143772) < 0.01, "L354 : contribution 512320 = +143 772,00");
+    verifie(Math.abs(boost.ecartRestant - 7442352) < 0.01, `L354 : écart restant = ajustement manuel 7 442 352,00 (reçu : ${boost.ecartRestant})`);
+    verifie(boost.preuvesAudit.some((p) => p.detail.includes("5 936 056,32")), "L354 : montant non tracé 5 936 056,32 présenté séparément");
+    verifie(boost.elementsConfirmes.some((x) => x.includes("L358")), "L354 : cause commune avec L358 documentée");
     // Révision 29/10/2026 : la décomposition affichée reconstitue le résiduel
     // au centime, avec le signe correct (+143 772 au sens balance − brouillard).
-    const dec = b.elementsConfirmes.find((x) => x.includes("Décomposition du résiduel"));
+    const dec = boost.elementsConfirmes.find((x) => x.includes("Décomposition du résiduel"));
     verifie(
       !!dec && espace(dec).includes("+143 772") && espace(dec).includes("+7 442 352") && espace(dec).includes("+7 586 124"),
       `L354 : décomposition affichée +143 772 + 7 442 352 = +7 586 124 (reçu : ${dec ?? "absente"})`,
     );
     verifie(
-      !b.elementsConfirmes.some((x) => x.includes("-143 772") || x.includes("−143 772")),
+      !boost.elementsConfirmes.some((x) => x.includes("-143 772") || x.includes("−143 772")),
       "L354 : plus aucune part de résiduel affichée en négatif (−143 772) — signe corrigé",
     );
   }
-  if (j) {
-    verifie(j.type === "REFERENCE_ADJUSTMENT", `L358 : type REFERENCE_ADJUSTMENT (reçu : ${j.type})`);
-    verifie(j.elementsConfirmes.some((x) => x.includes("L354")), "L358 : lié à L354 (pas une seconde anomalie indépendante)");
+  if (jbu) {
+    verifie(jbu.type === "REFERENCE_ADJUSTMENT", `L358 : type REFERENCE_ADJUSTMENT (reçu : ${jbu.type})`);
+    verifie(jbu.elementsConfirmes.some((x) => x.includes("L354")), "L358 : lié à L354 (pas une seconde anomalie indépendante)");
   }
 }
-// L471 / L482 ORANGE — conflit d'affectation
+// L471 / L482 ORANGE — conflit d'affectation.
+// Revue finale 29/10 : variables nommées d'après le diagnostic ciblé
+// (orangeMad = diagnostic L471 ORANGE MADAGASCAR, orangeMoney = diagnostic
+// L482 ORANGE MONEY MADAGASCAR) — les assertions L482 ne peuvent plus
+// être confondues avec celles de L471 (ni avec le bloc L354/L358).
 {
-  const a = parLigne(diagnostics, 471);
-  const b = parLigne(diagnostics, 482);
-  verifie(!!a && a.type === "ACCOUNT_OWNERSHIP_CONFLICT", `L471 : ACCOUNT_OWNERSHIP_CONFLICT (reçu : ${a?.type})`);
-  verifie(!!b && b.type === "ACCOUNT_OWNERSHIP_CONFLICT", `L482 : ACCOUNT_OWNERSHIP_CONFLICT (reçu : ${b?.type})`);
-  if (a) {
-    verifie(a.compte === "512600", "L471 : compte en conflit = 512600");
-    verifie(a.actionRecommandee.includes("par écrit"), "L471 : confirmation écrite exigée (pas d'attribution arbitraire)");
+  const orangeMad = parLigne(diagnostics, 471);
+  const orangeMoney = parLigne(diagnostics, 482);
+  verifie(!!orangeMad && orangeMad.type === "ACCOUNT_OWNERSHIP_CONFLICT", `L471 : ACCOUNT_OWNERSHIP_CONFLICT (reçu : ${orangeMad?.type})`);
+  verifie(!!orangeMoney && orangeMoney.type === "ACCOUNT_OWNERSHIP_CONFLICT", `L482 : ACCOUNT_OWNERSHIP_CONFLICT (reçu : ${orangeMoney?.type})`);
+  if (orangeMad) {
+    verifie(orangeMad.compte === "512600", "L471 : compte en conflit = 512600");
+    verifie(orangeMad.actionRecommandee.includes("par écrit"), "L471 : confirmation écrite exigée (pas d'attribution arbitraire)");
     // Révision 29/10/2026 : le résiduel L471 ne se réduit PAS au solde du
     // seul compte 512600 (il agrège quatre postes de la feuille) ; le calcul
     // de l'application est 0 — le résiduel s'identifie à la référence.
     verifie(
-      a.elementsConfirmes.some(
+      orangeMad.elementsConfirmes.some(
         (x) =>
           espace(x).includes("ne se réduit PAS") &&
           espace(x).includes("62 098 371,47") &&
@@ -140,27 +147,27 @@ verifie(diagnostics.length === 8, `exactement 8 diagnostics (reçu : ${diagnosti
       "L471 : résiduel 69 770 274,49 non réduit au solde 512600 (62 098 371,47) — supplément 7 671 903,02 documenté",
     );
     verifie(
-      a.elementsConfirmes.some((x) => x.includes("Montant calculé par l'application")),
+      orangeMad.elementsConfirmes.some((x) => x.includes("Montant calculé par l'application")),
       "L471 : montant calculé (0) distingué du montant de référence",
     );
     verifie(
-      a.preuvesAudit.some((p) => p.detail.includes("H471") && p.detail.includes("E480")),
+      orangeMad.preuvesAudit.some((p) => p.detail.includes("H471") && p.detail.includes("E480")),
       "L471 : décomposition H471 = E463 + E467 + E478 + E480 documentée comme hypothèse d'audit",
     );
     verifie(
-      !a.elementsConfirmes.some((x) => x.includes("correspond au centime au solde du compte 512600")),
+      !orangeMad.elementsConfirmes.some((x) => x.includes("correspond au centime au solde du compte 512600")),
       "L471 : l'ancienne affirmation (résiduel = solde 512600) a disparu",
     );
   }
-  if (b) {
+  if (orangeMoney) {
     verifie(
-      b.elementsConfirmes.some(
+      orangeMoney.elementsConfirmes.some(
         (x) => espace(x).includes("solde du compte 512600") && espace(x).includes("62 098 371,47"),
       ),
       "L482 : résiduel = référence E482 = solde 512600 (62 098 371,47) — égalité vérifiée au centime",
     );
     verifie(
-      b.elementsConfirmes.some((x) => x.includes("Montant calculé par l'application")),
+      orangeMoney.elementsConfirmes.some((x) => x.includes("Montant calculé par l'application")),
       "L482 : montant calculé (0) distingué du montant de référence",
     );
   }
