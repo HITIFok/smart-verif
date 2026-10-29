@@ -27,6 +27,12 @@ import type { ControleRapproche } from "@/lib/rapprochement";
 import { STATUT_LABELS as STATUT_RAPPROCHEMENT, TYPE_CONTROLE_LABELS } from "@/lib/rapprochement";
 import { STATUT_VALIDATION_LABELS } from "@/lib/validation";
 import {
+  construireDemandesPieces,
+  construireDiagnostics,
+  TYPE_DIAGNOSTIC_LABELS,
+} from "@/lib/diagnostics";
+import type { DiagnosticEcart } from "@/lib/diagnostics";
+import {
   CYCLE_CHAIN,
   SCHEMA_ECRITURES,
   SCHEMA_ANNULATION_PAIEMENT,
@@ -1955,7 +1961,17 @@ function Rapprochements({ result }: { result: AnalysisResult }) {
  *  (double comptage du 512600, ajustements manuels de la feuille). */
 function ValidationRapport({ result }: { result: AnalysisResult }) {
   const [ouvert, setOuvert] = useState<string | null>(null);
+  const [ouvertPieces, setOuvertPieces] = useState(false);
   const v = result.validation;
+  // Couche diagnostic (mission §6/§8) : dérivée du résultat du moteur, sans
+  // jamais modifier les soldes ni les statuts.
+  const diagnostics = useMemo(() => construireDiagnostics(result), [result]);
+  const diagParLigne = useMemo(() => {
+    const m = new Map<number, DiagnosticEcart>();
+    for (const d of diagnostics) m.set(d.ligne, d);
+    return m;
+  }, [diagnostics]);
+  const demandesPieces = useMemo(() => construireDemandesPieces(diagnostics, result), [diagnostics, result]);
   if (!v)
     return (
       <p className="panel mt-6 px-4 py-10 text-center text-sm text-muted-foreground">
@@ -2033,6 +2049,18 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
                     </p>
                   )}
                   {e.note && <p className="mt-1 text-xs text-accent-foreground">{e.note}</p>}
+                  {(() => {
+                    const d = diagParLigne.get(e.ecart.ligne);
+                    if (!d) return null;
+                    return (
+                      <p className="mt-1 text-xs font-medium text-accent-foreground">
+                        Diagnostic : {d.libelle}
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          (confiance : {d.confiance})
+                        </span>
+                      </p>
+                    );
+                  })()}
                 </div>
                 <div className="text-right">
                   <p className="num text-sm font-semibold">{fmt(e.ecart.montant)}</p>
@@ -2052,6 +2080,85 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
                   {STATUT_VALIDATION_LABELS[e.statut]}
                 </p>
               </button>
+              {ouvert === key &&
+                (() => {
+                  const d = diagParLigne.get(e.ecart.ligne);
+                  if (!d) return null;
+                  return (
+                    <div className="mt-2 space-y-2 rounded-md border border-accent/30 bg-accent/5 p-3 text-xs">
+                      <p className="font-semibold uppercase tracking-wide">
+                        Diagnostic — {TYPE_DIAGNOSTIC_LABELS[d.type]}
+                        {d.typesSecondaires.map((t) => (
+                          <span key={t} className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                            secondaire : {TYPE_DIAGNOSTIC_LABELS[t]}
+                          </span>
+                        ))}
+                      </p>
+                      <div>
+                        <p className="font-semibold">Constat</p>
+                        <p className="num text-muted-foreground">
+                          Référence {d.montantReference.toLocaleString("fr-FR")} Ar · calculé{" "}
+                          {d.montantCalcule.toLocaleString("fr-FR")} Ar · écart signé{" "}
+                          {d.ecartSigne.toLocaleString("fr-FR")} Ar — confiance : {d.confiance}. {d.regle}.
+                        </p>
+                      </div>
+                      {d.composants.length > 0 && (
+                        <div>
+                          <p className="font-semibold">Preuves (divergences détectées sur les données importées)</p>
+                          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                            {d.composants.map((c, i) => (
+                              <li key={i} className="num">
+                                {c.explication} Contribution au résiduel : {c.contribution.toLocaleString("fr-FR")} Ar.
+                              </li>
+                            ))}
+                            {d.ecartRestant !== 0 && (
+                              <li className="num">
+                                Part du résiduel non rattachée à une divergence de source :{" "}
+                                {d.ecartRestant.toLocaleString("fr-FR")} Ar.
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                      {d.elementsConfirmes.length > 0 && (
+                        <div>
+                          <p className="font-semibold">Éléments confirmés</p>
+                          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                            {d.elementsConfirmes.map((x, i) => (
+                              <li key={i}>{x}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {d.preuvesAudit.length > 0 && (
+                        <div>
+                          <p className="font-semibold">Hypothèses documentées (audit du 28/10/2026 — à confirmer, jamais des constats moteur)</p>
+                          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                            {d.preuvesAudit.map((p, i) => (
+                              <li key={i}>
+                                <span className="font-medium">{p.source}</span> — {p.detail}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {d.elementsManquants.length > 0 && (
+                        <div>
+                          <p className="font-semibold">Limites — informations encore manquantes</p>
+                          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                            {d.elementsManquants.map((x, i) => (
+                              <li key={i}>{x}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <div>
+                        <p className="font-semibold">Action recommandée</p>
+                        <p className="text-muted-foreground">{d.actionRecommandee}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
               {ouvert === key && e.pieces.length > 0 && (
                 <div className="mt-2 rounded-md bg-secondary/40 p-2">
                   <p className="mb-1 text-xs font-semibold">
@@ -2080,6 +2187,42 @@ function ValidationRapport({ result }: { result: AnalysisResult }) {
             </div>
           );
         })}
+      </div>
+      <div className="panel px-4 py-3">
+        <button
+          onClick={() => setOuvertPieces(!ouvertPieces)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <p className="text-sm font-semibold">
+            Pièces comptables à demander ({demandesPieces.length}) — liste exportable (feuille
+            « Pièces à demander » de l'export Excel)
+          </p>
+          <span className="text-xs font-semibold text-accent-foreground">
+            {ouvertPieces ? "Masquer" : "Afficher"}
+          </span>
+        </button>
+        {ouvertPieces && (
+          <div className="mt-2 space-y-1 text-xs">
+            <p className="text-muted-foreground">
+              Dérivée des diagnostics ci-dessus : grands livres à extraire, justificatifs
+              d'ajustement et confirmations à obtenir. Aucune réponse n'est présumée à la place du
+              comptable, et aucune écriture corrective Sage n'est proposée automatiquement.
+            </p>
+            {demandesPieces.map((d, i) => (
+              <div key={i} className="rounded-md border border-border bg-card px-3 py-2">
+                <p className="font-semibold">
+                  {d.piece}
+                  <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                    {d.type}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  {d.controle} — {d.motif}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

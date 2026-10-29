@@ -8,6 +8,11 @@ import {
 } from "./rapprochement";
 import { STATUT_VALIDATION_LABELS as STATUT_VALIDATION_R } from "./validation";
 import {
+  construireDemandesPieces,
+  construireDiagnostics,
+  TYPE_DIAGNOSTIC_LABELS as TYPE_DIAGNOSTIC_LABELS_R,
+} from "./diagnostics";
+import {
   SCHEMA_ECRITURES,
   SCHEMA_ANNULATION_PAIEMENT,
   SCHEMA_FRAIS_BANCAIRES,
@@ -418,6 +423,42 @@ export function exportAnomalies(result: AnalysisResult) {
       },
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totaux), "Validation totaux");
+
+    // Couche diagnostic (mission §6) : un diagnostic typé par contrôle non
+    // exact — sépare constat, preuves, hypothèses, limites et action.
+    const diagnostics = construireDiagnostics(result);
+    const diagsSheet = diagnostics.map((d) => ({
+      Bloc: d.bloc,
+      "Ligne feuille": d.ligne,
+      "Type de contrôle": d.typeControle === "famille" ? "Famille (latéral)" : "Entité",
+      Diagnostic: TYPE_DIAGNOSTIC_LABELS_R[d.type],
+      "Type diagnostic": d.type,
+      "Types secondaires": d.typesSecondaires.join(" + "),
+      Confiance: d.confiance,
+      "Montant référence": d.montantReference,
+      "Écart calculé": d.montantCalcule,
+      "Écart signé": d.ecartSigne,
+      "Divergences rattachées": d.composants
+        .map((c) => `${c.compte} (${c.contribution.toLocaleString("fr-FR")} Ar)`)
+        .join(" ; "),
+      "Écart restant non rattaché": d.ecartRestant,
+      "Éléments confirmés": d.elementsConfirmes.join(" | "),
+      "Hypothèses d'audit": d.preuvesAudit.map((p) => `${p.source} — ${p.detail}`).join(" | "),
+      Limites: d.elementsManquants.join(" | "),
+      "Action recommandée": d.actionRecommandee,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(diagsSheet), "Diagnostics 8 écarts");
+
+    // Mission §9 : liste exportable des pièces comptables à demander.
+    const demandes = construireDemandesPieces(diagnostics, result).map((d, i) => ({
+      "N°": i + 1,
+      Contrôle: d.controle,
+      "Ligne feuille": d.ligne || "",
+      "Type diagnostic": d.type,
+      "Pièce à demander": d.piece,
+      Motif: d.motif,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(demandes), "Pièces à demander");
   }
 
   // Mise en forme des montants et des largeurs de colonnes (json_to_sheet
